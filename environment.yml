@@ -9,4 +9,4 @@ dependencies:
   - pip:
     - moviepy
     - tensorforce==0.4.2
-    - gym-retro
+    - gym-retro  # Must be version 0.6 from master

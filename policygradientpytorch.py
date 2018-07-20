@@ -1,4 +1,4 @@
-# Agent that learns how to play pong by using a simple Policy Gradient method
+# Agent that learns how to play a SNES game by using a simple Policy Gradient method
 
 import retro
 import numpy as np
@@ -8,6 +8,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Bernoulli
 import moviepy.editor as mpy
+import argparse
 
 
 # Environment definitions
@@ -56,8 +57,7 @@ class Policy(nn.Module):
         self.bn2 = nn.BatchNorm2d(32)
         self.conv3 = nn.Conv2d(32, 32, kernel_size=5, stride=2)
         self.bn3 = nn.BatchNorm2d(32)
-        #self.head = nn.Linear(896, self.action_shape)  # Comix-Zone
-        self.head = nn.Linear(640, self.action_shape)  # SNES
+        self.head = nn.Linear(640, self.action_shape)  # SNES results in 640 pixels heres
 
         self.saved_log_probs = []
 
@@ -144,8 +144,19 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', savean
             saveanimation(rawframes, "{}_episode{}.mp4".format(checkpoint, episode))
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Agent that learns how to play a SNES game by using a simple Policy '
+                                                 'Gradient method.')
+    parser.add_argument('game', type=str, help='Game to play. Must be a valid Gym Retro game')
+    parser.add_argument('state', type=str, help='State (level) of the game to play')
+    parser.add_argument('checkpoint', type=str, help='Checkpoint file in which to save learning progress')
+    parser.add_argument('--render', action='store_true', help='Render game while playing')
+    parser.add_argument('--saveanimations', action='store_true', help='Save mp4 files with playthroughs')
+
+    args = parser.parse_args()
+    train(args.game, args.state, render=args.render, saveanimations=args.saveanimations, checkpoint=args.checkpoint)
+
     #train(render=True, saveanimations=False, game='SonicTheHedgehog-Genesis', state='GreenHillZone.Act1')
     #train(render=False, saveanimations=False, game='ComixZone-Genesis', state='Episode1.Page1', checkpoint="comixzone.pt")
     #train(render=True, saveanimations=False, game='DonkeyKongCountry-Snes', state="1Player.CongoJungle.JungleHijinks.Level1", checkpoint="donkeykong.pt")
     #train(render=True, saveanimations=False, game='SuperMarioWorld-Snes', state="DonutPlains1", checkpoint="supermario.pt")
-    train(render=True, saveanimations=True, game='GradiusIII-Snes', state="Level1.Mode1.Shield", checkpoint="gradius3.pt")
+    #train(render=True, saveanimations=True, game='GradiusIII-Snes', state="Level1.Mode1.Shield", checkpoint="gradius3.pt")
