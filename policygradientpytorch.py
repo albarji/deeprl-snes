@@ -57,7 +57,7 @@ class Policy(nn.Module):
         self.bn2 = nn.BatchNorm2d(32)
         self.conv3 = nn.Conv2d(32, 32, kernel_size=5, stride=2)
         self.bn3 = nn.BatchNorm2d(32)
-        self.head = nn.Linear(640, self.action_shape)  # SNES results in 640 pixels heres
+        self.head = nn.Linear(640, self.action_shape)  # SNES results in 640 pixels here
 
         self.saved_log_probs = []
 
@@ -154,9 +154,3 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     train(args.game, args.state, render=args.render, saveanimations=args.saveanimations, checkpoint=args.checkpoint)
-
-    #train(render=True, saveanimations=False, game='SonicTheHedgehog-Genesis', state='GreenHillZone.Act1')
-    #train(render=False, saveanimations=False, game='ComixZone-Genesis', state='Episode1.Page1', checkpoint="comixzone.pt")
-    #train(render=True, saveanimations=False, game='DonkeyKongCountry-Snes', state="1Player.CongoJungle.JungleHijinks.Level1", checkpoint="donkeykong.pt")
-    #train(render=True, saveanimations=False, game='SuperMarioWorld-Snes', state="DonutPlains1", checkpoint="supermario.pt")
-    #train(render=True, saveanimations=True, game='GradiusIII-Snes', state="Level1.Mode1.Shield", checkpoint="gradius3.pt")
