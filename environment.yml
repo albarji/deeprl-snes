@@ -1,0 +1,12 @@
+name: gym-retro
+channels:
+  - pytorch
+dependencies:
+  - pytorch
+  - torchvision
+  - tensorflow-gpu
+  - cython
+  - pip:
+    - moviepy
+    - tensorforce==0.4.2
+    - gym-retro
