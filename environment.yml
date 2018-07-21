@@ -6,7 +6,9 @@ dependencies:
   - torchvision
   - tensorflow-gpu
   - cython
+  - scikit-image=0.14.0
   - pip:
     - moviepy
     - tensorforce==0.4.2
     - gym-retro  # Must be version 0.6 from master
+    - keras-rl==0.4.2

@@ -9,6 +9,7 @@ import torch.optim as optim
 from torch.distributions import Bernoulli
 import moviepy.editor as mpy
 import argparse
+from skimage import color
 
 
 # Environment definitions
@@ -21,7 +22,8 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 def prepro(image):
     """ prepro uint8 frame into tensor image"""
     image = image[::4, ::4, :]  # downsample by factor of 4
-    return np.rollaxis(image, 2, 0)  # Put channels first
+    image = color.rgb2gray(image)  # turn to grayscale
+    return np.expand_dims(image, axis=0)  # Put channels first
 
 
 def discount_rewards(r, gamma=0.99):
@@ -51,52 +53,63 @@ class Policy(nn.Module):
 
         self.action_shape = env.action_space.n
 
-        self.conv1 = nn.Conv2d(3, 16, kernel_size=5, stride=2)
-        self.bn1 = nn.BatchNorm2d(16)
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=5, stride=2)
-        self.bn2 = nn.BatchNorm2d(32)
-        self.conv3 = nn.Conv2d(32, 32, kernel_size=5, stride=2)
-        self.bn3 = nn.BatchNorm2d(32)
-        self.head = nn.Linear(640, self.action_shape)  # SNES results in 640 pixels here
-
-        self.saved_log_probs = []
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=8, stride=4)
+        self.bn1 = nn.BatchNorm2d(32)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
+        self.bn2 = nn.BatchNorm2d(64)
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+        self.bn3 = nn.BatchNorm2d(64)
+        self.dense = nn.Linear(768, 512)  # SNES results in 640 pixels here
+        self.head = nn.Linear(512, self.action_shape)
 
     def forward(self, x):
         x = F.relu(self.bn1((self.conv1(x))))
         x = F.relu(self.bn2((self.conv2(x))))
         x = F.relu(self.bn3((self.conv3(x))))
-        return F.sigmoid(self.head(x.view(x.size(0), -1)))
+        x = F.relu(self.dense(x.view(x.size(0), -1)))
+        return F.sigmoid(self.head(x))
 
     def select_action(self, state):
+        """Returns the action selected by the policy, as well as the logprobs of each eaction"""
         state = state.float().unsqueeze(0)
         probs = self(state)
         m = Bernoulli(probs)
         actions = m.sample()
-        self.saved_log_probs.append(m.log_prob(actions))
-        return actions.tolist()[0]
+        return actions.tolist()[0], m.log_prob(actions)
 
 
-def runepisode(env, policy, steps=5000, render=False):
-    observation = env.reset()
-    x = prepro(observation)
-    observations = []
-    rewards = []
-    rawframes = []
+class ReplayMemory:
+    """Implements an experience replay memory"""
+    def __init__(self, size=1000000):
+        self.size = size
+        self.memory = []
 
-    for _ in range(steps):
-        if render:
-            env.render()
-        x = torch.tensor(x).to(device)
-        action = policy.select_action(x)
-        observation, reward, done, info = env.step(action)
-        x = prepro(observation)
-        observations.append(x)
-        rewards.append(reward)
-        rawframes.append(observation)
-        if done:
-            break
+    def append(self, observation, action, reward):
+        """Adds an experience to the memory"""
+        if len(self.memory) >= self.size:
+            self.pop()
+        self.memory.append((observation, action, reward))
 
-    return rewards, observations, rawframes
+    def extend(self, iterable):
+        """Adds an iterable of experiences to the memory
+
+        Each experience must be in the format
+            (observation, action, reward)
+        """
+        for exp in iterable:
+            self.append(*exp)
+
+    def pop(self):
+        """Removes the oldest memory"""
+        self.memory.pop()
+
+    def minibatch(self, size=128):
+        """Returns a random minibatch of memories
+
+        Memories are returned as an iterable of tuples in the form
+            (observation, action, reward)
+        """
+        return np.random.choice(self.memory, size=size, replace=False)
 
 
 def saveanimation(rawframes, filename):
@@ -108,7 +121,8 @@ def saveanimation(rawframes, filename):
     clip.write_videofile(filename)
 
 
-def train(game, state=None, render=False, checkpoint='policygradient.pt', saveanimations=False):
+def train(game, state=None, render=False, checkpoint='policygradient.pt', saveanimations=False, memorysize=1000000,
+          episodesteps=10000, maxsteps=5000000, test=False):
     env = retro.make(game=game, state=state)
     try:
         policy = torch.load(checkpoint)
@@ -122,26 +136,53 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', savean
     optimizer = optim.RMSprop(policy.parameters(), lr=1e-4)
 
     episode = 0
-    while True:
-        # Gather samples
-        rewards, observations, rawframes = runepisode(env, policy, render=render)
-        print("Total reward for episode {}: {}".format(episode, np.sum(rewards)))
+    totalsteps = 0
+    memory = ReplayMemory(memorysize)
+    episoderewards = []
+    while totalsteps < maxsteps:
+        # Run episode
+        observation = env.reset()
+        x = prepro(observation)
+        rewards = []
+        rawframes = []
+        logprobs = []
+        for _ in range(episodesteps):
+            if render:
+                env.render()
+            x = torch.tensor(x).to(device)
+            action, logp = policy.select_action(x)
+            observation, reward, done, info = env.step(action)
+            memory.append(x, action, reward)
+            x = prepro(observation)
+            rewards.append(reward)
+            rawframes.append(observation)
+            logprobs.append(logp)
+            if done:
+                break
+        episoderewards.append(np.sum(rewards))
+        totalsteps += len(rewards)
+
+        print(f"Episode {episode} end, {totalsteps} steps performed. 100-episodes average reward "
+              f"{np.mean(episoderewards[-100:]):.0f}")
+        # TODO: update network using a random batch of samples from the memory
         drewards = discount_rewards(rewards)
         # Update policy network
-        policy_loss = [-log_prob * reward for log_prob, reward in zip(policy.saved_log_probs, drewards)]
-        optimizer.zero_grad()
-        policy_loss = torch.cat(policy_loss).sum()
-        policy_loss.backward()
-        optimizer.step()
-        del policy.saved_log_probs[:]
+        if not test:
+            policy_loss = [-log_prob * reward for log_prob, reward in zip(logprobs, drewards)]
+            optimizer.zero_grad()
+            policy_loss = torch.cat(policy_loss).sum()
+            policy_loss.backward()
+            optimizer.step()
 
-        episode += 1
-        # Save policy network from time to time
-        if not episode % 10:
-            torch.save(policy, checkpoint)
+            # Save policy network from time to time
+            if not episode % 10:
+                torch.save(policy, checkpoint)
+
         # Save animation (if requested)
         if saveanimations:
             saveanimation(rawframes, "{}_episode{}.mp4".format(checkpoint, episode))
+
+        episode += 1
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Agent that learns how to play a SNES game by using a simple Policy '
@@ -151,6 +192,7 @@ if __name__ == "__main__":
     parser.add_argument('checkpoint', type=str, help='Checkpoint file in which to save learning progress')
     parser.add_argument('--render', action='store_true', help='Render game while playing')
     parser.add_argument('--saveanimations', action='store_true', help='Save mp4 files with playthroughs')
+    parser.add_argument('--test', action='store_true', help='Run in test mode (no policy updates)')
 
     args = parser.parse_args()
     train(args.game, args.state, render=args.render, saveanimations=args.saveanimations, checkpoint=args.checkpoint)
