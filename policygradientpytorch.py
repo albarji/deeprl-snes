@@ -121,6 +121,29 @@ def saveanimation(rawframes, filename):
     clip.write_videofile(filename)
 
 
+def runepisode(env, policy, episodesteps, render):
+    """Runs an episode under the given policy
+
+    Returns an array of tuples in the form
+        (observation, processed observation, logprobabilities, action, reward, terminal)
+    """
+    observation = env.reset()
+    x = prepro(observation)
+    memories = []
+    for _ in range(episodesteps):
+        if render:
+            env.render()
+        x = torch.tensor(x).to(device)
+        action, logp = policy.select_action(x)
+        newobservation, reward, done, info = env.step(action)
+        memories.append((observation, x, logp, action, reward, done))
+        if done:
+            break
+        observation = newobservation
+        x = prepro(observation)
+    return memories
+
+
 def train(game, state=None, render=False, checkpoint='policygradient.pt', saveanimations=False, memorysize=1000000,
           episodesteps=10000, maxsteps=5000000, test=False):
     env = retro.make(game=game, state=state)
@@ -141,33 +164,17 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', savean
     episoderewards = []
     while totalsteps < maxsteps:
         # Run episode
-        observation = env.reset()
-        x = prepro(observation)
-        rewards = []
-        rawframes = []
-        logprobs = []
-        for _ in range(episodesteps):
-            if render:
-                env.render()
-            x = torch.tensor(x).to(device)
-            action, logp = policy.select_action(x)
-            observation, reward, done, info = env.step(action)
-            memory.append(x, action, reward)
-            x = prepro(observation)
-            rewards.append(reward)
-            rawframes.append(observation)
-            logprobs.append(logp)
-            if done:
-                break
+        history = runepisode(env, policy, episodesteps, render)
+        observations, states, logprobs, actions, rewards, dones = zip(*history)
         episoderewards.append(np.sum(rewards))
         totalsteps += len(rewards)
-
         print(f"Episode {episode} end, {totalsteps} steps performed. 100-episodes average reward "
               f"{np.mean(episoderewards[-100:]):.0f}")
-        # TODO: update network using a random batch of samples from the memory
-        drewards = discount_rewards(rewards)
+
         # Update policy network
+        # TODO: update network using a random batch of samples from the memory
         if not test:
+            drewards = discount_rewards(rewards)
             policy_loss = [-log_prob * reward for log_prob, reward in zip(logprobs, drewards)]
             optimizer.zero_grad()
             policy_loss = torch.cat(policy_loss).sum()
@@ -180,7 +187,7 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', savean
 
         # Save animation (if requested)
         if saveanimations:
-            saveanimation(rawframes, "{}_episode{}.mp4".format(checkpoint, episode))
+            saveanimation(observations, "{}_episode{}.mp4".format(checkpoint, episode))
 
         episode += 1
 
