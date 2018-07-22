@@ -48,12 +48,12 @@ class Policy(nn.Module):
 
     action_shape = []
 
-    def __init__(self, env):
+    def __init__(self, env, windowlength=4):
         super(Policy, self).__init__()
 
         self.action_shape = env.action_space.n
 
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=8, stride=4)
+        self.conv1 = nn.Conv2d(windowlength, 32, kernel_size=8, stride=4)
         self.bn1 = nn.BatchNorm2d(32)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
         self.bn2 = nn.BatchNorm2d(64)
@@ -121,7 +121,7 @@ def saveanimation(rawframes, filename):
     clip.write_videofile(filename)
 
 
-def runepisode(env, policy, episodesteps, render):
+def runepisode(env, policy, episodesteps, render, windowlength=4):
     """Runs an episode under the given policy
 
     Returns an array of tuples in the form
@@ -129,18 +129,20 @@ def runepisode(env, policy, episodesteps, render):
     """
     observation = env.reset()
     x = prepro(observation)
+    xbatch = np.repeat(x, windowlength, axis=0)
     memories = []
     for _ in range(episodesteps):
         if render:
             env.render()
-        x = torch.tensor(x).to(device)
-        action, logp = policy.select_action(x)
+        action, logp = policy.select_action(torch.tensor(xbatch).to(device))
         newobservation, reward, done, info = env.step(action)
-        memories.append((observation, x, logp, action, reward, done))
+        memories.append((observation, xbatch, logp, action, reward, done))
         if done:
             break
         observation = newobservation
         x = prepro(observation)
+        xbatch[:-1] = xbatch[1:]
+        xbatch[-1] = x
     return memories
 
 
@@ -187,7 +189,9 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', savean
 
         # Save animation (if requested)
         if saveanimations:
-            saveanimation(observations, "{}_episode{}.mp4".format(checkpoint, episode))
+            saveanimation(list(observations), f"{checkpoint}_episode{episode}.mp4")
+            # TODO: not saving the processed stream in a correct format
+            saveanimation([np.expand_dims(st[-1], 2) for st in states], f"{checkpoint}_processed_episode{episode}.mp4")
 
         episode += 1
 
