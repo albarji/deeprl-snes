@@ -9,7 +9,9 @@ import torch.optim as optim
 from torch.distributions import Bernoulli
 import moviepy.editor as mpy
 import argparse
+import skimage
 from skimage import color
+from collections import deque
 
 
 # Environment definitions
@@ -23,7 +25,7 @@ def prepro(image):
     """ prepro uint8 frame into tensor image"""
     image = image[::4, ::4, :]  # downsample by factor of 4
     image = color.rgb2gray(image)  # turn to grayscale
-    return np.expand_dims(image, axis=0)  # Put channels first
+    return image
 
 
 def discount_rewards(r, gamma=0.99):
@@ -53,20 +55,20 @@ class Policy(nn.Module):
 
         self.action_shape = env.action_space.n
 
-        self.conv1 = nn.Conv2d(windowlength, 32, kernel_size=8, stride=4)
+        self.conv1 = nn.Conv2d(windowlength, 32, kernel_size=8, stride=2)
         self.bn1 = nn.BatchNorm2d(32)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
         self.bn2 = nn.BatchNorm2d(64)
-        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
-        self.bn3 = nn.BatchNorm2d(64)
-        self.dense = nn.Linear(768, 512)  # SNES results in 640 pixels here
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, stride=2)
+        self.bn3 = nn.BatchNorm2d(128)
+        self.dense = nn.Linear(3840, 512)
         self.head = nn.Linear(512, self.action_shape)
 
     def forward(self, x):
-        x = F.relu(self.bn1((self.conv1(x))))
-        x = F.relu(self.bn2((self.conv2(x))))
-        x = F.relu(self.bn3((self.conv3(x))))
-        x = F.relu(self.dense(x.view(x.size(0), -1)))
+        x = F.elu(self.bn1((self.conv1(x))))
+        x = F.elu(self.bn2((self.conv2(x))))
+        x = F.elu(self.bn3((self.conv3(x))))
+        x = F.elu(self.dense(x.view(x.size(0), -1)))
         return F.sigmoid(self.head(x))
 
     def select_action(self, state):
@@ -129,7 +131,8 @@ def runepisode(env, policy, episodesteps, render, windowlength=4):
     """
     observation = env.reset()
     x = prepro(observation)
-    xbatch = np.repeat(x, windowlength, axis=0)
+    statesqueue = deque([x for _ in range(windowlength)], maxlen=windowlength)
+    xbatch = np.stack(statesqueue, axis=0)
     memories = []
     for _ in range(episodesteps):
         if render:
@@ -141,8 +144,8 @@ def runepisode(env, policy, episodesteps, render, windowlength=4):
             break
         observation = newobservation
         x = prepro(observation)
-        xbatch[:-1] = xbatch[1:]
-        xbatch[-1] = x
+        statesqueue.append(x)
+        xbatch = np.stack(statesqueue, axis=0)
     return memories
 
 
@@ -174,7 +177,7 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', savean
               f"{np.mean(episoderewards[-100:]):.0f}")
 
         # Update policy network
-        # TODO: update network using a random batch of samples from the memory
+        # TODO: update network using a random batch of episodes from the memory
         if not test:
             drewards = discount_rewards(rewards)
             policy_loss = [-log_prob * reward for log_prob, reward in zip(logprobs, drewards)]
@@ -190,8 +193,8 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', savean
         # Save animation (if requested)
         if saveanimations:
             saveanimation(list(observations), f"{checkpoint}_episode{episode}.mp4")
-            # TODO: not saving the processed stream in a correct format
-            saveanimation([np.expand_dims(st[-1], 2) for st in states], f"{checkpoint}_processed_episode{episode}.mp4")
+            saveanimation([skimage.img_as_ubyte(color.gray2rgb(st[-1])) for st in states],
+                          f"{checkpoint}_processed_episode{episode}.mp4")
 
         episode += 1
 
