@@ -25,7 +25,7 @@ def prepro(image):
     """ prepro uint8 frame into tensor image"""
     image = image[::4, ::4, :]  # downsample by factor of 4
     image = color.rgb2gray(image)  # turn to grayscale
-    return image
+    return image - 0.5  # 0-center
 
 
 def discount_rewards(r, gamma=0.99):
@@ -65,10 +65,10 @@ class Policy(nn.Module):
         self.head = nn.Linear(512, self.action_shape)
 
     def forward(self, x):
-        x = F.elu(self.bn1((self.conv1(x))))
-        x = F.elu(self.bn2((self.conv2(x))))
-        x = F.elu(self.bn3((self.conv3(x))))
-        x = F.elu(self.dense(x.view(x.size(0), -1)))
+        x = F.selu(self.bn1((self.conv1(x))))
+        x = F.selu(self.bn2((self.conv2(x))))
+        x = F.selu(self.bn3((self.conv3(x))))
+        x = F.selu(self.dense(x.view(x.size(0), -1)))
         return F.sigmoid(self.head(x))
 
     def select_action(self, state):
@@ -150,14 +150,18 @@ def runepisode(env, policy, episodesteps, render, windowlength=4):
 
 
 def train(game, state=None, render=False, checkpoint='policygradient.pt', saveanimations=False, memorysize=1000000,
-          episodesteps=10000, maxsteps=5000000, test=False):
+          episodesteps=10000, maxsteps=50000000, test=False, restart=False):
     env = retro.make(game=game, state=state)
-    try:
-        policy = torch.load(checkpoint)
-        print("Resumed checkpoint {}".format(checkpoint))
-    except:
+    if restart:
         policy = Policy(env)
-        print("Created policy network from scratch")
+        print("Restarted policy network from scratch")
+    else:
+        try:
+            policy = torch.load(checkpoint)
+            print(f"Resumed checkpoint {checkpoint}")
+        except:
+            policy = Policy(env)
+            print(f"Checkpoint {checkpoint} not found, created policy network from scratch")
     print(policy)
     policy.to(device)
     print("device: {}".format(device))
@@ -193,7 +197,7 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', savean
         # Save animation (if requested)
         if saveanimations:
             saveanimation(list(observations), f"{checkpoint}_episode{episode}.mp4")
-            saveanimation([skimage.img_as_ubyte(color.gray2rgb(st[-1])) for st in states],
+            saveanimation([skimage.img_as_ubyte(color.gray2rgb(st[-1]+0.5)) for st in states],
                           f"{checkpoint}_processed_episode{episode}.mp4")
 
         episode += 1
@@ -207,6 +211,8 @@ if __name__ == "__main__":
     parser.add_argument('--render', action='store_true', help='Render game while playing')
     parser.add_argument('--saveanimations', action='store_true', help='Save mp4 files with playthroughs')
     parser.add_argument('--test', action='store_true', help='Run in test mode (no policy updates)')
+    parser.add_argument('--restart', action='store_true', help='Ignore existing checkpoint file, restart from scratch')
 
     args = parser.parse_args()
-    train(args.game, args.state, render=args.render, saveanimations=args.saveanimations, checkpoint=args.checkpoint)
+    train(args.game, args.state, render=args.render, saveanimations=args.saveanimations, checkpoint=args.checkpoint,
+          restart=args.restart)
