@@ -28,7 +28,7 @@ def prepro(image):
     return image - 0.5  # 0-center
 
 
-def discount_rewards(r, gamma=0.99):
+def discount_rewards(r, terminals, gamma=0.99):
     """ take 1D float array of rewards and compute discounted reward
 
     Source: https://gist.github.com/karpathy/a4166c7fe253700972fcbc77e4ea32c5)
@@ -36,7 +36,10 @@ def discount_rewards(r, gamma=0.99):
     discounted_r = np.zeros_like(r)
     running_add = 0
     for t in reversed(range(0, len(r))):
-        running_add = running_add * gamma + r[t]
+        if terminals[t]:
+            running_add = r[t]
+        else:
+            running_add = running_add * gamma + r[t]
         discounted_r[t] = running_add
 
     # standardize the rewards to be unit normal (helps control the gradient estimator variance)
@@ -80,40 +83,6 @@ class Policy(nn.Module):
         return actions.tolist()[0], m.log_prob(actions)
 
 
-class ReplayMemory:
-    """Implements an experience replay memory"""
-    def __init__(self, size=1000000):
-        self.size = size
-        self.memory = []
-
-    def append(self, observation, action, reward):
-        """Adds an experience to the memory"""
-        if len(self.memory) >= self.size:
-            self.pop()
-        self.memory.append((observation, action, reward))
-
-    def extend(self, iterable):
-        """Adds an iterable of experiences to the memory
-
-        Each experience must be in the format
-            (observation, action, reward)
-        """
-        for exp in iterable:
-            self.append(*exp)
-
-    def pop(self):
-        """Removes the oldest memory"""
-        self.memory.pop()
-
-    def minibatch(self, size=128):
-        """Returns a random minibatch of memories
-
-        Memories are returned as an iterable of tuples in the form
-            (observation, action, reward)
-        """
-        return np.random.choice(self.memory, size=size, replace=False)
-
-
 def saveanimation(rawframes, filename):
     """Saves a sequence of frames as an animation
 
@@ -126,32 +95,31 @@ def saveanimation(rawframes, filename):
 def runepisode(env, policy, episodesteps, render, windowlength=4):
     """Runs an episode under the given policy
 
-    Returns an array of tuples in the form
+    Returns the episode history: an array of tuples in the form
         (observation, processed observation, logprobabilities, action, reward, terminal)
     """
     observation = env.reset()
     x = prepro(observation)
     statesqueue = deque([x for _ in range(windowlength)], maxlen=windowlength)
     xbatch = np.stack(statesqueue, axis=0)
-    memories = []
+    history = []
     for _ in range(episodesteps):
         if render:
             env.render()
         action, logp = policy.select_action(torch.tensor(xbatch).to(device))
         newobservation, reward, done, info = env.step(action)
-        memories.append((observation, xbatch, logp, action, reward, done))
+        history.append((observation, xbatch, logp, action, reward, done))
         if done:
             break
         observation = newobservation
         x = prepro(observation)
         statesqueue.append(x)
         xbatch = np.stack(statesqueue, axis=0)
-    return memories
+    return history
 
 
-def train(game, state=None, render=False, checkpoint='policygradient.pt', saveanimations=False, memorysize=1000000,
-          episodesteps=10000, maxsteps=50000000, test=False, restart=False):
-    env = retro.make(game=game, state=state)
+def loadnetwork(env, checkpoint, restart):
+    """Loads the policy network from a checkpoint"""
     if restart:
         policy = Policy(env)
         print("Restarted policy network from scratch")
@@ -162,45 +130,85 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', savean
         except:
             policy = Policy(env)
             print(f"Checkpoint {checkpoint} not found, created policy network from scratch")
-    print(policy)
     policy.to(device)
+    return policy
+
+
+def train(game, state=None, render=False, checkpoint='policygradient.pt', episodesteps=10000, maxsteps=50000000,
+          restart=False, batchsize=1):
+    """Trains a policy network"""
+    env = retro.make(game=game, state=state)
+    policy = loadnetwork(env, checkpoint, restart)
+    print(policy)
     print("device: {}".format(device))
     optimizer = optim.RMSprop(policy.parameters(), lr=1e-4)
 
     episode = 0
     totalsteps = 0
-    memory = ReplayMemory(memorysize)
     episoderewards = []
     while totalsteps < maxsteps:
+        # Run batch of episodes
+        rewards = []
+        logprobs = []
+        terminals = []
+        for _ in range(batchsize):
+            history = runepisode(env, policy, episodesteps, render)
+            _, _, lps, _, rew, ter = zip(*history)
+            episoderewards.append(np.sum(rew))
+            totalsteps += len(history)
+            print(f"Episode {episode} end, {totalsteps} steps performed. 100-episodes average reward "
+                  f"{np.mean(episoderewards[-100:]):.0f}")
+
+            rewards.extend(rew)
+            logprobs.extend(lps)
+            terminals.extend(ter)
+
+            del history
+            episode += 1
+
+        # Update policy network with batch
+        drewards = discount_rewards(rewards, terminals)
+
+        # Policy Gradient update
+        policy_loss = [-log_prob * reward for log_prob, reward in zip(logprobs, drewards)]
+        optimizer.zero_grad()
+        policy_loss = torch.cat(policy_loss).sum()
+        policy_loss.backward()
+        optimizer.step()
+
+        del rewards, logprobs, terminals
+
+        # Save policy network from time to time
+        if not episode % 10:
+            torch.save(policy, checkpoint)
+
+
+def test(game, state=None, render=False, checkpoint='policygradient.pt', saveanimations=False, episodesteps=10000):
+    """Tests a previously trained network"""
+    env = retro.make(game=game, state=state)
+    policy = loadnetwork(env, checkpoint, False)
+    print(policy)
+    print("device: {}".format(device))
+
+    episode = 0
+    episoderewards = []
+    while True:
         # Run episode
         history = runepisode(env, policy, episodesteps, render)
-        observations, states, logprobs, actions, rewards, dones = zip(*history)
+        observations, states, _, _, rewards, _ = zip(*history)
         episoderewards.append(np.sum(rewards))
-        totalsteps += len(rewards)
-        print(f"Episode {episode} end, {totalsteps} steps performed. 100-episodes average reward "
-              f"{np.mean(episoderewards[-100:]):.0f}")
-
-        # Update policy network
-        # TODO: update network using a random batch of episodes from the memory
-        if not test:
-            drewards = discount_rewards(rewards)
-            policy_loss = [-log_prob * reward for log_prob, reward in zip(logprobs, drewards)]
-            optimizer.zero_grad()
-            policy_loss = torch.cat(policy_loss).sum()
-            policy_loss.backward()
-            optimizer.step()
-
-            # Save policy network from time to time
-            if not episode % 10:
-                torch.save(policy, checkpoint)
+        print(f"Episode {episode} end, reward {np.sum(rewards)}. 5-episodes average reward "
+              f"{np.mean(episoderewards[-5:]):.0f}")
 
         # Save animation (if requested)
         if saveanimations:
             saveanimation(list(observations), f"{checkpoint}_episode{episode}.mp4")
-            saveanimation([skimage.img_as_ubyte(color.gray2rgb(st[-1]+0.5)) for st in states],
+            saveanimation([skimage.img_as_ubyte(color.gray2rgb(st[-1] + 0.5)) for st in states],
                           f"{checkpoint}_processed_episode{episode}.mp4")
 
         episode += 1
+        del history, observations, states, rewards
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Agent that learns how to play a SNES game by using a simple Policy '
@@ -212,7 +220,12 @@ if __name__ == "__main__":
     parser.add_argument('--saveanimations', action='store_true', help='Save mp4 files with playthroughs')
     parser.add_argument('--test', action='store_true', help='Run in test mode (no policy updates)')
     parser.add_argument('--restart', action='store_true', help='Ignore existing checkpoint file, restart from scratch')
+    parser.add_argument('--batchsize', type=int, default=1, help='Number of episodes in each updating batch')
 
     args = parser.parse_args()
-    train(args.game, args.state, render=args.render, saveanimations=args.saveanimations, checkpoint=args.checkpoint,
-          restart=args.restart)
+    if args.test:
+        test(args.game, args.state, render=args.render, saveanimations=args.saveanimations,
+             checkpoint=args.checkpoint)
+    else:
+        train(args.game, args.state, render=args.render, checkpoint=args.checkpoint, restart=args.restart,
+              batchsize=args.batchsize)
