@@ -74,13 +74,17 @@ class Policy(nn.Module):
         x = F.selu(self.dense(x.view(x.size(0), -1)))
         return F.sigmoid(self.head(x))
 
-    def select_action(self, state):
-        """Returns the action selected by the policy, as well as the logprobs of each eaction"""
+    def action_probs(self, state):
+        """Returns the probabilities of actions for a given state"""
         state = state.float().unsqueeze(0)
-        probs = self(state)
+        return self(state)
+
+    def select_action(self, state):
+        """Returns the action selected by the policy, plus the probabilities of each action"""
+        probs = self.action_probs(state)
         m = Bernoulli(probs)
         actions = m.sample()
-        return actions.tolist()[0], m.log_prob(actions)
+        return actions.tolist()[0], probs
 
 
 def saveanimation(rawframes, filename):
@@ -96,7 +100,7 @@ def runepisode(env, policy, episodesteps, render, windowlength=4):
     """Runs an episode under the given policy
 
     Returns the episode history: an array of tuples in the form
-        (observation, processed observation, logprobabilities, action, reward, terminal)
+        (observation, processed observation, probabilities, action, reward, terminal)
     """
     observation = env.reset()
     x = prepro(observation)
@@ -106,9 +110,9 @@ def runepisode(env, policy, episodesteps, render, windowlength=4):
     for _ in range(episodesteps):
         if render:
             env.render()
-        action, logp = policy.select_action(torch.tensor(xbatch).to(device))
+        action, p = policy.select_action(torch.tensor(xbatch).to(device))
         newobservation, reward, done, info = env.step(action)
-        history.append((observation, xbatch, logp, action, reward, done))
+        history.append((observation, xbatch, p, action, reward, done))
         if done:
             break
         observation = newobservation
@@ -135,7 +139,7 @@ def loadnetwork(env, checkpoint, restart):
 
 
 def train(game, state=None, render=False, checkpoint='policygradient.pt', episodesteps=10000, maxsteps=50000000,
-          restart=False, batchsize=1):
+          restart=False, batchsize=1, optimizersteps=3, epscut=0.1):
     """Trains a policy network"""
     env = retro.make(game=game, state=state)
     policy = loadnetwork(env, checkpoint, restart)
@@ -148,35 +152,42 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', episod
     episoderewards = []
     while totalsteps < maxsteps:
         # Run batch of episodes
+        states = []
         rewards = []
-        logprobs = []
+        probs = []
         terminals = []
         for _ in range(batchsize):
             history = runepisode(env, policy, episodesteps, render)
-            _, _, lps, _, rew, ter = zip(*history)
+            _, st, ps, _, rew, ter = zip(*history)
             episoderewards.append(np.sum(rew))
             totalsteps += len(history)
             print(f"Episode {episode} end, {totalsteps} steps performed. 100-episodes average reward "
                   f"{np.mean(episoderewards[-100:]):.0f}")
 
+            states.extend(st)
             rewards.extend(rew)
-            logprobs.extend(lps)
+            probs.extend(ps)
             terminals.extend(ter)
 
             del history
             episode += 1
 
-        # Update policy network with batch
+        # Proximal Policy Optimization update
+        states = [torch.tensor(st).to(device) for st in states]
+        probs = [p.detach() for p in probs]
         drewards = discount_rewards(rewards, terminals)
+        for _ in range(optimizersteps):
+            newprobs = [policy.action_probs(st) for st in states]
+            probratios = [newprob/prob for prob, newprob in zip(probs, newprobs)]
+            advantages = [-reward for reward in drewards]
+            policy_loss = [torch.min(rt * adv, torch.clamp(rt, 1-epscut, 1+epscut) * adv)
+                           for rt, adv in zip(probratios, advantages)]
+            optimizer.zero_grad()
+            policy_loss = torch.cat(policy_loss).sum()
+            policy_loss.backward()
+            optimizer.step()
 
-        # Policy Gradient update
-        policy_loss = [-log_prob * reward for log_prob, reward in zip(logprobs, drewards)]
-        optimizer.zero_grad()
-        policy_loss = torch.cat(policy_loss).sum()
-        policy_loss.backward()
-        optimizer.step()
-
-        del rewards, logprobs, terminals
+        del states, rewards, probs, terminals
 
         # Save policy network from time to time
         if not episode % 10:
