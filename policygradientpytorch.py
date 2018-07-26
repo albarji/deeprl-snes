@@ -139,16 +139,18 @@ def loadnetwork(env, checkpoint, restart):
 
 
 def train(game, state=None, render=False, checkpoint='policygradient.pt', episodesteps=10000, maxsteps=50000000,
-          restart=False, batchsize=1, optimizersteps=3, epscut=0.1):
+          restart=False, batchsize=1, optimizersteps=3, epscut=0.1, entcoef=0.01):
     """Trains a policy network"""
     env = retro.make(game=game, state=state)
     policy = loadnetwork(env, checkpoint, restart)
     print(policy)
     print("device: {}".format(device))
+    #optimizer = optim.Adam(policy.parameters(), lr=1e-4)
     optimizer = optim.RMSprop(policy.parameters(), lr=1e-4)
 
     episode = 0
     totalsteps = 0
+    networkupdates = 0
     episoderewards = []
     while totalsteps < maxsteps:
         # Run batch of episodes
@@ -172,25 +174,31 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', episod
             del history
             episode += 1
 
+        if sum(rewards) == 0:
+            continue
         # Proximal Policy Optimization update
         states = [torch.tensor(st).to(device) for st in states]
         probs = [p.detach() for p in probs]
-        drewards = discount_rewards(rewards, terminals)
+        advantages = discount_rewards(rewards, terminals)
         for _ in range(optimizersteps):
             newprobs = [policy.action_probs(st) for st in states]
             probratios = [newprob/prob for prob, newprob in zip(probs, newprobs)]
-            advantages = [-reward for reward in drewards]
-            policy_loss = [torch.min(rt * adv, torch.clamp(rt, 1-epscut, 1+epscut) * adv)
-                           for rt, adv in zip(probratios, advantages)]
+            clippings = [torch.min(rt * adv, torch.clamp(rt, 1-epscut, 1+epscut) * adv)
+                         for rt, adv in zip(probratios, advantages)]
+            pgloss = -torch.cat(clippings).mean()  # Minimize negative of advantages
+            entropyloss = torch.cat([p*torch.log(p) for p in newprobs]).mean()
+            loss = pgloss + entcoef * entropyloss
+            print(f"probratios[0] {probratios[0]}")
+            print(f"loss {loss} (pg {pgloss} entropy {entropyloss})")
             optimizer.zero_grad()
-            policy_loss = torch.cat(policy_loss).sum()
-            policy_loss.backward()
+            loss.backward()
             optimizer.step()
 
         del states, rewards, probs, terminals
 
         # Save policy network from time to time
-        if not episode % 10:
+        networkupdates += 1
+        if not networkupdates % 10:
             torch.save(policy, checkpoint)
 
 
@@ -232,6 +240,7 @@ if __name__ == "__main__":
     parser.add_argument('--test', action='store_true', help='Run in test mode (no policy updates)')
     parser.add_argument('--restart', action='store_true', help='Ignore existing checkpoint file, restart from scratch')
     parser.add_argument('--batchsize', type=int, default=1, help='Number of episodes in each updating batch')
+    parser.add_argument('--optimizersteps', type=int, default=3, help='Number of optimizer steps in each PPO update')
 
     args = parser.parse_args()
     if args.test:
@@ -239,4 +248,4 @@ if __name__ == "__main__":
              checkpoint=args.checkpoint)
     else:
         train(args.game, args.state, render=args.render, checkpoint=args.checkpoint, restart=args.restart,
-              batchsize=args.batchsize)
+              batchsize=args.batchsize, optimizersteps=args.optimizersteps)
