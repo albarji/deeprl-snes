@@ -74,17 +74,22 @@ class Policy(nn.Module):
         x = F.selu(self.dense(x.view(x.size(0), -1)))
         return F.sigmoid(self.head(x))
 
+    def _outdist(self, state):
+        """Computes the probatility distribution of activating each output unit, given an input state"""
+        probs = self(state.float().unsqueeze(0))
+        return Bernoulli(probs)
+
     def select_action(self, state):
         """Selects an action following the policy"""
-        probs = self(state.float().unsqueeze(0))
-        m = Bernoulli(probs)
-        return m.sample()
+        return self._outdist(state).sample()
 
     def action_logprobs(self, state, action):
         """Returns the logprobabilities of performing a given action at given state under this policy"""
-        probs = self(state.float().unsqueeze(0))
-        m = Bernoulli(probs)
-        return m.log_prob(action)
+        return self._outdist(state).log_prob(action)
+
+    def entropy(self, state):
+        """Returns the entropy of the policy for a given state"""
+        return torch.sum(self._outdist(state).entropy())
 
 
 def saveanimation(rawframes, filename):
@@ -188,7 +193,7 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', episod
             clippings = [torch.min(rt * adv, torch.clamp(rt, 1-epscut, 1+epscut) * adv)
                          for rt, adv in zip(probratios, advantages)]
             pgloss = -torch.cat(clippings).mean()  # Minimize negative of advantages
-            entropyloss = torch.cat([p*torch.log(p) for p in newprobs]).mean()
+            entropyloss = -torch.mean(torch.stack([policy.entropy(st) for st in states]))  # Minimize negative entropy
             loss = pgloss + entcoef * entropyloss
             print(f"loss {loss} (pg {pgloss} entropy {entropyloss})")
             loss.backward()
@@ -242,7 +247,7 @@ if __name__ == "__main__":
     parser.add_argument('--test', action='store_true', help='Run in test mode (no policy updates)')
     parser.add_argument('--restart', action='store_true', help='Ignore existing checkpoint file, restart from scratch')
     parser.add_argument('--batchsize', type=int, default=1, help='Number of episodes in each updating batch')
-    parser.add_argument('--optimizersteps', type=int, default=10, help='Number of optimizer steps in each PPO update')
+    parser.add_argument('--optimizersteps', type=int, default=3, help='Number of optimizer steps in each PPO update')
 
     args = parser.parse_args()
     if args.test:
