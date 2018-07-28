@@ -29,12 +29,10 @@ def prepro(image):
 
 
 def discount_rewards(r, terminals, gamma=0.99):
-    """ take 1D float array of rewards and compute discounted reward
-
-    Source: https://gist.github.com/karpathy/a4166c7fe253700972fcbc77e4ea32c5)
-    """
+    """Take 1D float array of rewards and compute clipped discounted reward"""
     discounted_r = np.zeros_like(r)
     running_add = 0
+    r = np.sign(r)  # Clip rewards
     for t in reversed(range(0, len(r))):
         if terminals[t]:
             running_add = r[t]
@@ -42,9 +40,6 @@ def discount_rewards(r, terminals, gamma=0.99):
             running_add = running_add * gamma + r[t]
         discounted_r[t] = running_add
 
-    # standardize the rewards to be unit normal (helps control the gradient estimator variance)
-    discounted_r -= np.mean(discounted_r)
-    discounted_r /= np.std(discounted_r) + eps
     return discounted_r
 
 
@@ -65,27 +60,38 @@ class Policy(nn.Module):
         self.conv3 = nn.Conv2d(64, 128, kernel_size=3, stride=2)
         self.bn3 = nn.BatchNorm2d(128)
         self.dense = nn.Linear(3840, 512)
-        self.head = nn.Linear(512, self.action_shape)
+        self.actionshead = nn.Linear(512, self.action_shape)
+        self.valuehead = nn.Linear(512, 1)
 
     def forward(self, x):
         x = F.selu(self.bn1((self.conv1(x))))
         x = F.selu(self.bn2((self.conv2(x))))
         x = F.selu(self.bn3((self.conv3(x))))
         x = F.selu(self.dense(x.view(x.size(0), -1)))
-        return F.sigmoid(self.head(x))
+        return F.sigmoid(self.actionshead(x)), self.valuehead(x)
 
     def _outdist(self, state):
         """Computes the probatility distribution of activating each output unit, given an input state"""
-        probs = self(state.float().unsqueeze(0))
+        probs, _ = self(state.float().unsqueeze(0))
         return Bernoulli(probs)
 
     def select_action(self, state):
-        """Selects an action following the policy"""
-        return self._outdist(state).sample()
+        """Selects an action following the policy
 
-    def action_logprobs(self, state, action):
-        """Returns the logprobabilities of performing a given action at given state under this policy"""
-        return self._outdist(state).log_prob(action)
+        Returns the selected action and the log probabilities of that action being selected.
+        """
+        m = self._outdist(state)
+        action = m.sample()
+        return action, m.log_prob(action)
+
+    def action_logprobs_value(self, state, action):
+        """Returns the logprobabilities of performing a given action at given state under this policy
+
+        Also returns the value of the current state, for convenience.
+        """
+        probs, value = self(state.float().unsqueeze(0))
+        m = Bernoulli(probs)
+        return m.log_prob(action), value
 
     def entropy(self, state):
         """Returns the entropy of the policy for a given state"""
@@ -116,8 +122,7 @@ def runepisode(env, policy, episodesteps, render, windowlength=4):
         if render:
             env.render()
         st = torch.tensor(xbatch).to(device)
-        action = policy.select_action(st)
-        p = policy.action_logprobs(st, action)
+        action, p = policy.select_action(st)
         newobservation, reward, done, info = env.step(action.tolist()[0])
         history.append((observation, xbatch, p, action, reward, done))
         if done:
@@ -146,7 +151,7 @@ def loadnetwork(env, checkpoint, restart):
 
 
 def train(game, state=None, render=False, checkpoint='policygradient.pt', episodesteps=10000, maxsteps=50000000,
-          restart=False, batchsize=1, optimizersteps=10, epscut=0.1, entcoef=0.01):
+          restart=False, batchsize=1, optimizersteps=10, epscut=0.1, valuecoef=1, entcoef=0.01):
     """Trains a policy network"""
     env = retro.make(game=game, state=state)
     policy = loadnetwork(env, checkpoint, restart)
@@ -165,6 +170,14 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', episod
         probs = []
         actions = []
         terminals = []
+        #TODO: implement a real batch-size operation, such in OpenAI's PPO. This will allow for larger episodes
+        # This involves:
+        # - Gather history of steps of size T (e.g. 128 x 8 = 1024)
+        # - Compute Advantage estimates for history
+        # - For each optimizer epoch (K epochs)
+        #   - Randomly shuffle the gathered history
+        #   - For each minibatch of size M < T over the shuffled history (e.g. M = 32)
+        #       - Perform 1 Adam step minimizing the total loss
         for _ in range(batchsize):
             history = runepisode(env, policy, episodesteps, render)
             _, st, ps, ac, rew, ter = zip(*history)
@@ -185,21 +198,32 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', episod
         # Proximal Policy Optimization update
         states = [torch.tensor(st).to(device) for st in states]
         probs = [torch.exp(p.detach()) for p in probs]
-        advantages = discount_rewards(rewards, terminals)
+        drewards = discount_rewards(rewards, terminals)
         for _ in range(optimizersteps):
             optimizer.zero_grad()
-            newprobs = [torch.exp(policy.action_logprobs(st, ac)) for st, ac in zip(states, actions)]
+            logprobs, values = zip(*[policy.action_logprobs_value(st, ac) for st, ac in zip(states, actions)])
+            advantages = [reward - value.tolist()[0][0] for reward, value in zip(drewards, values)]
+            advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + eps)
+            # Policy Gradients loss (advantages)
+            newprobs = [torch.exp(logprob) for logprob in logprobs]
             probratios = [newprob/prob for prob, newprob in zip(probs, newprobs)]
             clippings = [torch.min(rt * adv, torch.clamp(rt, 1-epscut, 1+epscut) * adv)
                          for rt, adv in zip(probratios, advantages)]
-            pgloss = -torch.cat(clippings).mean()  # Minimize negative of advantages
-            entropyloss = -torch.mean(torch.stack([policy.entropy(st) for st in states]))  # Minimize negative entropy
-            loss = pgloss + entcoef * entropyloss
-            print(f"loss {loss} (pg {pgloss} entropy {entropyloss})")
+            pgloss = torch.cat(clippings).mean()
+            # Entropy loss
+            entropyloss = torch.mean(torch.stack([policy.entropy(st) for st in states]))
+            # Value estimation loss
+            # TODO: in OpenAI PPO a clipping is also performed in this loss
+            valueloss = torch.mean(torch.stack([(value - reward)**2 for value, reward in zip(values, drewards)]))
+            # Total loss
+            loss = pgloss - valuecoef * valueloss + entcoef * entropyloss
+            print(f"loss {loss} (pg {pgloss} value {valueloss} entropy {entropyloss})")
+            # Maximize loss == minimize - loss
+            loss = -loss
             loss.backward()
             optimizer.step()
 
-            del newprobs, probratios, clippings
+            del values, newprobs, probratios, clippings
 
         del states, rewards, probs, actions, terminals
 
@@ -247,12 +271,13 @@ if __name__ == "__main__":
     parser.add_argument('--test', action='store_true', help='Run in test mode (no policy updates)')
     parser.add_argument('--restart', action='store_true', help='Ignore existing checkpoint file, restart from scratch')
     parser.add_argument('--batchsize', type=int, default=1, help='Number of episodes in each updating batch')
-    parser.add_argument('--optimizersteps', type=int, default=3, help='Number of optimizer steps in each PPO update')
+    parser.add_argument('--optimizersteps', type=int, default=4, help='Number of optimizer steps in each PPO update')
+    parser.add_argument('--episodesteps', type=int, default=10000, help='Max number of steps to run in each episode')
 
     args = parser.parse_args()
     if args.test:
         test(args.game, args.state, render=args.render, saveanimations=args.saveanimations,
-             checkpoint=args.checkpoint)
+             checkpoint=args.checkpoint, episodesteps=args.episodesteps)
     else:
         train(args.game, args.state, render=args.render, checkpoint=args.checkpoint, restart=args.restart,
-              batchsize=args.batchsize, optimizersteps=args.optimizersteps)
+              batchsize=args.batchsize, optimizersteps=args.optimizersteps, episodesteps=args.episodesteps)
