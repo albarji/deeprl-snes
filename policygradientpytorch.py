@@ -93,6 +93,11 @@ class Policy(nn.Module):
         m = Bernoulli(probs)
         return m.log_prob(action), value
 
+    def value(self, state):
+        """Estimates the value of the given state"""
+        _, value = self(state.float().unsqueeze(0))
+        return value
+
     def entropy(self, state):
         """Returns the entropy of the policy for a given state"""
         return torch.sum(self._outdist(state).entropy())
@@ -140,7 +145,8 @@ def experiencegenerator(env, policy, episodesteps=None, render=False, windowleng
     If the environment episode ends, it is resetted to continue acquiring experience.
 
     Yields experiences as tuples in the form:
-        (observation, processed observation, logprobabilities, action, reward, terminal)
+        (observation, processed observation, logprobabilities, action, reward,
+         new observation, new processed observation, terminal)
     """
     # Generate experiences indefinitely
     episode = 0
@@ -162,16 +168,17 @@ def experiencegenerator(env, policy, episodesteps=None, render=False, windowleng
             st = torch.tensor(xbatch).to(device)
             action, p = policy.select_action(st)
             newobservation, reward, done, info = env.step(action.tolist()[0])
-            yield (observation, xbatch, p, action, reward, done)
+            x = prepro(newobservation)
+            statesqueue.append(x)
+            newxbatch = np.stack(statesqueue, axis=0)
+            yield (observation, xbatch, p, action, reward, newobservation, newxbatch, done)
             rewards += reward
 
             step += 1
             if done or (episodesteps is not None and step >= episodesteps):
                 break
             observation = newobservation
-            x = prepro(observation)
-            statesqueue.append(x)
-            xbatch = np.stack(statesqueue, axis=0)
+            xbatch = newxbatch
 
         totalsteps += step
         episoderewards.append(rewards)
@@ -197,7 +204,7 @@ def loadnetwork(env, checkpoint, restart):
     return policy
 
 
-def ppostep(policy, optimizer, states, actions, drewards, baseprobs, advantages, epscut, valuecoef, entcoef):
+def ppostep(policy, optimizer, states, actions, baseprobs, values, advantages, epscut, valuecoef, entcoef):
     """Performs a step of Proximal Policy Optimization
 
     Arguments:
@@ -205,16 +212,18 @@ def ppostep(policy, optimizer, states, actions, drewards, baseprobs, advantages,
         - optimizer: pytorch optimizer algorithm to use.
         - states: iterable of gathered experience states
         - actions: iterable of performed actions in the states
-        - drewards: iterable of discounted rewards for those actions
         - basepros: current base probabilities of performing those actions
+        - values: estimated values for each state
         - advantages: estimated advantage values for those actions
         - epscut: epsilon cut for policy gradient update
         - valuecoef: weight of value function loss
         - entcoef: weight of entropy function loss
+
+    Reference: https://arxiv.org/pdf/1707.06347.pdf
     """
     optimizer.zero_grad()
-    logprobs, bvalues = zip(*[policy.action_logprobs_value(st, ac) for st, ac
-                               in zip(states, actions)])
+    logprobs, newvalues = zip(*[policy.action_logprobs_value(st, ac) for st, ac
+                              in zip(states, actions)])
     # Policy Gradients loss (advantages)
     newprobs = [torch.exp(logp) for logp in logprobs]
     probratios = [newprob / prob for prob, newprob in zip(baseprobs, newprobs)]
@@ -225,8 +234,9 @@ def ppostep(policy, optimizer, states, actions, drewards, baseprobs, advantages,
     entropyloss = torch.mean(torch.stack([policy.entropy(st) for st in states]))
     # Value estimation loss
     # TODO: in OpenAI PPO a clipping is also performed in this loss
-    valueloss = torch.mean(torch.stack([(value - reward) ** 2 for value, reward
-                                        in zip(bvalues, drewards)]))
+    # (newvalue - [advantage + oldvalue])^2, that is, make new value closer to estimated error in old estimate
+    valueloss = torch.mean(torch.stack([(newval - adv + val) ** 2 for newval, adv, val
+                                        in zip(newvalues, advantages, values)]))
     # Total loss
     loss = pgloss - valuecoef * valueloss + entcoef * entropyloss
     print(f"loss {loss:.3f} (pg {pgloss:.3f} value {valueloss:.3f} entropy {entropyloss:.3f})")
@@ -236,8 +246,35 @@ def ppostep(policy, optimizer, states, actions, drewards, baseprobs, advantages,
     optimizer.step()
 
 
+def generalized_advantage_estimation(values, rewards, terminals, lastvalue, gamma, lam):
+    """Estimates a generalized version of the advantage (GAE) of each action, in the PPO-ActorCritic style
+
+    Arguments:
+        - values: estimated values for each state
+        - rewards: iterable of obtained rewards for those states
+        - terminals: iterable of whether each state above is terminal
+        - lastvalue: estimated value after all the steps above have been performed
+        - gamma: GAE discount parameter
+        - lam: rewards discount parameter
+
+    Reference: https://arxiv.org/pdf/1707.06347.pdf
+    """
+    # Estimate advantages from last to first state
+    delta = np.zeros(len(values))
+    advantages = np.zeros(len(values))
+    delta[-1] = rewards[-1] + gamma * lastvalue * (not terminals[-1]) - values[-1]
+    advantages[-1] = lastadv = delta[-1]
+    for t in reversed(range(len(values) - 1)):
+        delta[t] = rewards[t] + gamma * values[t + 1] * (not terminals[t]) - values[t]
+        advantages[t] = lastadv = delta[t] + gamma * lam * (not terminals[t]) * lastadv
+    # Normalize advantages
+    advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + eps)
+    return advantages
+
+
 def train(game, state=None, render=False, checkpoint='policygradient.pt', episodesteps=10000, maxsteps=50000000,
-          restart=False, minibatchsize=32, nminibatches=32, optimizersteps=4, epscut=0.1, valuecoef=1, entcoef=0.01):
+          restart=False, minibatchsize=32, nminibatches=32, optimizersteps=4, epscut=0.1, valuecoef=1,
+          entcoef=0.01, gamma=0.99, lam=0.95):
     """Trains a policy network"""
     env = retro.make(game=game, state=state)
     policy = loadnetwork(env, checkpoint, restart)
@@ -252,14 +289,20 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', episod
         # Gather experiences
         samples = [next(expgen) for _ in range(minibatchsize*nminibatches)]
         totalsteps += minibatchsize * nminibatches
-        _, states, logprobs, actions, rewards, terminals = zip(*samples)
+        _, states, logprobs, actions, rewards, _, newstates, terminals = zip(*samples)
         states = [torch.tensor(st).to(device) for st in states]
-        drewards = discount_rewards(rewards, terminals)
-        # Compute advantages
-        logprobs, values = zip(*[policy.action_logprobs_value(st, ac) for st, ac in zip(states, actions)])
-        advantages = [reward - value.tolist()[0][0] for reward, value in zip(drewards, values)]
-        advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + eps)
         probs = [torch.exp(p.detach()) for p in logprobs]
+        values = [policy.value(st).tolist()[0][0] for st in states]
+        lastvalue = policy.value(torch.tensor(newstates[-1]).to(device))
+        # Compute advantages
+        advantages = generalized_advantage_estimation(
+            values=values,
+            rewards=rewards,
+            terminals=terminals,
+            lastvalue=lastvalue,
+            gamma=gamma,
+            lam=lam
+        )
 
         # Optimizer epochs
         for _ in range(optimizersteps):
@@ -273,9 +316,9 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', episod
                     optimizer=optimizer,
                     states=[states[i] for i in batchidx],
                     actions=[actions[i] for i in batchidx],
-                    drewards=[drewards[i] for i in batchidx],
                     baseprobs=[probs[i] for i in batchidx],
                     advantages=[advantages[i] for i in batchidx],
+                    values=[values[i] for i in batchidx],
                     epscut=epscut,
                     valuecoef=valuecoef,
                     entcoef=entcoef
