@@ -134,6 +134,53 @@ def runepisode(env, policy, episodesteps, render, windowlength=4):
     return history
 
 
+def experiencegenerator(env, policy, episodesteps=None, render=False, windowlength=4, verbose=True):
+    """Generates experience from the environment.
+
+    If the environment episode ends, it is resetted to continue acquiring experience.
+
+    Yields experiences as tuples in the form:
+        (observation, processed observation, logprobabilities, action, reward, terminal)
+    """
+    # Generate experiences indefinitely
+    episode = 0
+    totalsteps = 0
+    episoderewards = []
+    while True:
+        # Reinitialize environment
+        observation = env.reset()
+        x = prepro(observation)
+        statesqueue = deque([x for _ in range(windowlength)], maxlen=windowlength)
+        xbatch = np.stack(statesqueue, axis=0)
+        step = 0
+
+        # Steps
+        rewards = 0
+        while True:
+            if render:
+                env.render()
+            st = torch.tensor(xbatch).to(device)
+            action, p = policy.select_action(st)
+            newobservation, reward, done, info = env.step(action.tolist()[0])
+            yield (observation, xbatch, p, action, reward, done)
+            rewards += reward
+
+            step += 1
+            if done or (episodesteps is not None and step >= episodesteps):
+                break
+            observation = newobservation
+            x = prepro(observation)
+            statesqueue.append(x)
+            xbatch = np.stack(statesqueue, axis=0)
+
+        totalsteps += step
+        episoderewards.append(rewards)
+        episode += 1
+        if verbose:
+            print(f"Episode {episode} end, {totalsteps} steps performed. Reward {rewards:.0f}, "
+                  f"100-episodes average reward {np.mean(episoderewards[-100:]):.0f}")
+
+
 def loadnetwork(env, checkpoint, restart):
     """Loads the policy network from a checkpoint"""
     if restart:
@@ -150,80 +197,89 @@ def loadnetwork(env, checkpoint, restart):
     return policy
 
 
+def ppostep(policy, optimizer, states, actions, drewards, baseprobs, advantages, epscut, valuecoef, entcoef):
+    """Performs a step of Proximal Policy Optimization
+
+    Arguments:
+        - policy: policy network to optimize.
+        - optimizer: pytorch optimizer algorithm to use.
+        - states: iterable of gathered experience states
+        - actions: iterable of performed actions in the states
+        - drewards: iterable of discounted rewards for those actions
+        - basepros: current base probabilities of performing those actions
+        - advantages: estimated advantage values for those actions
+        - epscut: epsilon cut for policy gradient update
+        - valuecoef: weight of value function loss
+        - entcoef: weight of entropy function loss
+    """
+    optimizer.zero_grad()
+    logprobs, bvalues = zip(*[policy.action_logprobs_value(st, ac) for st, ac
+                               in zip(states, actions)])
+    # Policy Gradients loss (advantages)
+    newprobs = [torch.exp(logp) for logp in logprobs]
+    probratios = [newprob / prob for prob, newprob in zip(baseprobs, newprobs)]
+    clippings = [torch.min(rt * adv, torch.clamp(rt, 1 - epscut, 1 + epscut) * adv)
+                 for rt, adv in zip(probratios, advantages)]
+    pgloss = torch.cat(clippings).mean()
+    # Entropy loss
+    entropyloss = torch.mean(torch.stack([policy.entropy(st) for st in states]))
+    # Value estimation loss
+    # TODO: in OpenAI PPO a clipping is also performed in this loss
+    valueloss = torch.mean(torch.stack([(value - reward) ** 2 for value, reward
+                                        in zip(bvalues, drewards)]))
+    # Total loss
+    loss = pgloss - valuecoef * valueloss + entcoef * entropyloss
+    print(f"loss {loss:.3f} (pg {pgloss:.3f} value {valueloss:.3f} entropy {entropyloss:.3f})")
+    # Maximize loss == minimize - loss
+    loss = -loss
+    loss.backward()
+    optimizer.step()
+
+
 def train(game, state=None, render=False, checkpoint='policygradient.pt', episodesteps=10000, maxsteps=50000000,
-          restart=False, batchsize=1, optimizersteps=10, epscut=0.1, valuecoef=1, entcoef=0.01):
+          restart=False, minibatchsize=32, nminibatches=32, optimizersteps=4, epscut=0.1, valuecoef=1, entcoef=0.01):
     """Trains a policy network"""
     env = retro.make(game=game, state=state)
     policy = loadnetwork(env, checkpoint, restart)
     print(policy)
     print("device: {}".format(device))
     optimizer = optim.Adam(policy.parameters(), lr=1e-4)
+    expgen = experiencegenerator(env, policy, episodesteps=episodesteps, render=render)
 
-    episode = 0
     totalsteps = 0
     networkupdates = 0
-    episoderewards = []
     while totalsteps < maxsteps:
-        # Run batch of episodes
-        states = []
-        rewards = []
-        probs = []
-        actions = []
-        terminals = []
-        #TODO: implement a real batch-size operation, such in OpenAI's PPO. This will allow for larger episodes
-        # This involves:
-        # - Gather history of steps of size T (e.g. 128 x 8 = 1024)
-        # - Compute Advantage estimates for history
-        # - For each optimizer epoch (K epochs)
-        #   - Randomly shuffle the gathered history
-        #   - For each minibatch of size M < T over the shuffled history (e.g. M = 32)
-        #       - Perform 1 Adam step minimizing the total loss
-        for _ in range(batchsize):
-            history = runepisode(env, policy, episodesteps, render)
-            _, st, ps, ac, rew, ter = zip(*history)
-            episoderewards.append(np.sum(rew))
-            totalsteps += len(history)
-            print(f"Episode {episode} end, {totalsteps} steps performed. 100-episodes average reward "
-                  f"{np.mean(episoderewards[-100:]):.0f}")
-
-            states.extend(st)
-            rewards.extend(rew)
-            probs.extend(ps)
-            actions.extend(ac)
-            terminals.extend(ter)
-
-            del history, st, ps, ac, rew, ter
-            episode += 1
-
-        # Proximal Policy Optimization update
+        # Gather experiences
+        samples = [next(expgen) for _ in range(minibatchsize*nminibatches)]
+        totalsteps += minibatchsize * nminibatches
+        _, states, logprobs, actions, rewards, terminals = zip(*samples)
         states = [torch.tensor(st).to(device) for st in states]
-        probs = [torch.exp(p.detach()) for p in probs]
         drewards = discount_rewards(rewards, terminals)
-        for _ in range(optimizersteps):
-            optimizer.zero_grad()
-            logprobs, values = zip(*[policy.action_logprobs_value(st, ac) for st, ac in zip(states, actions)])
-            advantages = [reward - value.tolist()[0][0] for reward, value in zip(drewards, values)]
-            advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + eps)
-            # Policy Gradients loss (advantages)
-            newprobs = [torch.exp(logprob) for logprob in logprobs]
-            probratios = [newprob/prob for prob, newprob in zip(probs, newprobs)]
-            clippings = [torch.min(rt * adv, torch.clamp(rt, 1-epscut, 1+epscut) * adv)
-                         for rt, adv in zip(probratios, advantages)]
-            pgloss = torch.cat(clippings).mean()
-            # Entropy loss
-            entropyloss = torch.mean(torch.stack([policy.entropy(st) for st in states]))
-            # Value estimation loss
-            # TODO: in OpenAI PPO a clipping is also performed in this loss
-            valueloss = torch.mean(torch.stack([(value - reward)**2 for value, reward in zip(values, drewards)]))
-            # Total loss
-            loss = pgloss - valuecoef * valueloss + entcoef * entropyloss
-            print(f"loss {loss} (pg {pgloss} value {valueloss} entropy {entropyloss})")
-            # Maximize loss == minimize - loss
-            loss = -loss
-            loss.backward()
-            optimizer.step()
+        # Compute advantages
+        logprobs, values = zip(*[policy.action_logprobs_value(st, ac) for st, ac in zip(states, actions)])
+        advantages = [reward - value.tolist()[0][0] for reward, value in zip(drewards, values)]
+        advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + eps)
+        probs = [torch.exp(p.detach()) for p in logprobs]
 
-            del values, newprobs, probratios, clippings
+        # Optimizer epochs
+        for _ in range(optimizersteps):
+            # Random shuffle of experiences
+            idx = np.random.permutation(range(len(samples)))
+            # One step of SGD for each minibatch
+            for i in range(nminibatches):
+                batchidx = idx[i*minibatchsize:(i+1)*minibatchsize]
+                ppostep(
+                    policy=policy,
+                    optimizer=optimizer,
+                    states=[states[i] for i in batchidx],
+                    actions=[actions[i] for i in batchidx],
+                    drewards=[drewards[i] for i in batchidx],
+                    baseprobs=[probs[i] for i in batchidx],
+                    advantages=[advantages[i] for i in batchidx],
+                    epscut=epscut,
+                    valuecoef=valuecoef,
+                    entcoef=entcoef
+                )
 
         del states, rewards, probs, actions, terminals
 
@@ -270,7 +326,6 @@ if __name__ == "__main__":
     parser.add_argument('--saveanimations', action='store_true', help='Save mp4 files with playthroughs')
     parser.add_argument('--test', action='store_true', help='Run in test mode (no policy updates)')
     parser.add_argument('--restart', action='store_true', help='Ignore existing checkpoint file, restart from scratch')
-    parser.add_argument('--batchsize', type=int, default=1, help='Number of episodes in each updating batch')
     parser.add_argument('--optimizersteps', type=int, default=4, help='Number of optimizer steps in each PPO update')
     parser.add_argument('--episodesteps', type=int, default=10000, help='Max number of steps to run in each episode')
 
@@ -280,4 +335,4 @@ if __name__ == "__main__":
              checkpoint=args.checkpoint, episodesteps=args.episodesteps)
     else:
         train(args.game, args.state, render=args.render, checkpoint=args.checkpoint, restart=args.restart,
-              batchsize=args.batchsize, optimizersteps=args.optimizersteps, episodesteps=args.episodesteps)
+              optimizersteps=args.optimizersteps, episodesteps=args.episodesteps)
