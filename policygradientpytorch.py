@@ -204,7 +204,8 @@ def loadnetwork(env, checkpoint, restart):
     return policy
 
 
-def ppostep(policy, optimizer, states, actions, baseprobs, values, advantages, epscut, valuecoef, entcoef):
+def ppostep(policy, optimizer, states, actions, baseprobs, values, advantages, epscut, gradclip,
+            valuecoef, entcoef):
     """Performs a step of Proximal Policy Optimization
 
     Arguments:
@@ -216,6 +217,7 @@ def ppostep(policy, optimizer, states, actions, baseprobs, values, advantages, e
         - values: estimated values for each state
         - advantages: estimated advantage values for those actions
         - epscut: epsilon cut for policy gradient update
+        - gradclip: maximum norm for clipping gradients
         - valuecoef: weight of value function loss
         - entcoef: weight of entropy function loss
 
@@ -245,8 +247,9 @@ def ppostep(policy, optimizer, states, actions, baseprobs, values, advantages, e
     valueloss = valuecoef * 0.5 * torch.mean(torch.max(valuelosses, valuelosses_clipped))
     # Total loss
     loss = pgloss + valueloss + entropyloss
+    # Optimizer step, with clipped gradients to a max norm to avoid exploding gradients
     loss.backward()
-    # TODO: in OpenAI PPO gradients are clipped to a max norm
+    torch.nn.utils.clip_grad_norm(policy.parameters(), gradclip)
     optimizer.step()
 
     return loss, pgloss, valueloss, entropyloss
@@ -279,8 +282,8 @@ def generalized_advantage_estimation(values, rewards, terminals, lastvalue, gamm
 
 
 def train(game, state=None, render=False, checkpoint='policygradient.pt', episodesteps=10000, maxsteps=50000000,
-          restart=False, minibatchsize=32, nminibatches=32, optimizersteps=4, epscut=0.1, valuecoef=1,
-          entcoef=0.01, gamma=0.99, lam=0.95):
+          restart=False, minibatchsize=32, nminibatches=32, optimizersteps=4, epscut=0.1, gradclip=0.5,
+          valuecoef=1, entcoef=0.01, gamma=0.99, lam=0.95):
     """Trains a policy network"""
     env = retro.make(game=game, state=state)
     policy = loadnetwork(env, checkpoint, restart)
@@ -329,6 +332,7 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', episod
                     advantages=advantages[batchidx],
                     values=values[batchidx],
                     epscut=epscut,
+                    gradclip=gradclip,
                     valuecoef=valuecoef,
                     entcoef=entcoef
                 )
