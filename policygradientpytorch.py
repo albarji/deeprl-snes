@@ -184,7 +184,7 @@ def experiencegenerator(env, policy, episodesteps=None, render=False, windowleng
         episoderewards.append(rewards)
         episode += 1
         if verbose:
-            print(f"Episode {episode} end, {totalsteps} steps performed. Reward {rewards:.0f}, "
+            print(f"Episode {episode} end, {totalsteps} total steps performed. Reward {rewards:.0f}, "
                   f"100-episodes average reward {np.mean(episoderewards[-100:]):.0f}")
 
 
@@ -219,31 +219,37 @@ def ppostep(policy, optimizer, states, actions, baseprobs, values, advantages, e
         - valuecoef: weight of value function loss
         - entcoef: weight of entropy function loss
 
+    Returns the value of the losses computed in the optimization step.
+
     Reference: https://arxiv.org/pdf/1707.06347.pdf
     """
     optimizer.zero_grad()
-    logprobs, newvalues = zip(*[policy.action_logprobs_value(st, ac) for st, ac
-                              in zip(states, actions)])
+    # Compute action probabilities and state values for current network parameters
+    logprobs, newvalues = zip(*[policy.action_logprobs_value(st, ac) for st, ac in zip(states, actions)])
+    newvalues = torch.stack([x[0][0] for x in newvalues])
     # Policy Gradients loss (advantages)
     newprobs = [torch.exp(logp) for logp in logprobs]
     probratios = [newprob / prob for prob, newprob in zip(baseprobs, newprobs)]
     clippings = [torch.min(rt * adv, torch.clamp(rt, 1 - epscut, 1 + epscut) * adv)
                  for rt, adv in zip(probratios, advantages)]
-    pgloss = torch.cat(clippings).mean()
+    pgloss = -torch.cat(clippings).mean()
     # Entropy loss
-    entropyloss = torch.mean(torch.stack([policy.entropy(st) for st in states]))
+    entropyloss = - entcoef * torch.mean(torch.stack([policy.entropy(st) for st in states]))
     # Value estimation loss
-    # TODO: in OpenAI PPO a clipping is also performed in this loss
     # (newvalue - [advantage + oldvalue])^2, that is, make new value closer to estimated error in old estimate
-    valueloss = torch.mean(torch.stack([(newval - adv + val) ** 2 for newval, adv, val
-                                        in zip(newvalues, advantages, values)]))
+    # A clipped version of the loss is also included, thus imposing a kind of Huber loss
+    returns = advantages + values
+    valuelosses = (newvalues - returns) ** 2
+    newvalues_clipped = values + torch.clamp(newvalues - values, epscut)
+    valuelosses_clipped = (newvalues_clipped - returns) ** 2
+    valueloss = valuecoef * 0.5 * torch.mean(torch.max(valuelosses, valuelosses_clipped))
     # Total loss
-    loss = pgloss - valuecoef * valueloss + entcoef * entropyloss
-    print(f"loss {loss:.3f} (pg {pgloss:.3f} value {valueloss:.3f} entropy {entropyloss:.3f})")
-    # Maximize loss == minimize - loss
-    loss = -loss
+    loss = pgloss + valueloss + entropyloss
     loss.backward()
+    # TODO: in OpenAI PPO gradients are clipped to a max norm
     optimizer.step()
+
+    return loss, pgloss, valueloss, entropyloss
 
 
 def generalized_advantage_estimation(values, rewards, terminals, lastvalue, gamma, lam):
@@ -260,8 +266,8 @@ def generalized_advantage_estimation(values, rewards, terminals, lastvalue, gamm
     Reference: https://arxiv.org/pdf/1707.06347.pdf
     """
     # Estimate advantages from last to first state
-    delta = np.zeros(len(values))
-    advantages = np.zeros(len(values))
+    delta = np.zeros(len(values), dtype=np.float32)
+    advantages = np.zeros(len(values), dtype=np.float32)
     delta[-1] = rewards[-1] + gamma * lastvalue * (not terminals[-1]) - values[-1]
     advantages[-1] = lastadv = delta[-1]
     for t in reversed(range(len(values) - 1)):
@@ -292,8 +298,8 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', episod
         _, states, logprobs, actions, rewards, _, newstates, terminals = zip(*samples)
         states = [torch.tensor(st).to(device) for st in states]
         probs = [torch.exp(p.detach()) for p in logprobs]
-        values = [policy.value(st).tolist()[0][0] for st in states]
-        lastvalue = policy.value(torch.tensor(newstates[-1]).to(device))
+        values = torch.stack([policy.value(st).detach()[0][0] for st in states])
+        lastvalue = policy.value(torch.tensor(newstates[-1]).to(device)).detach()[0][0]
         # Compute advantages
         advantages = generalized_advantage_estimation(
             values=values,
@@ -303,26 +309,34 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', episod
             gamma=gamma,
             lam=lam
         )
+        advantages = torch.tensor(advantages).to(device)
+        print(f"Explored {minibatchsize*nminibatches} steps")
 
         # Optimizer epochs
-        for _ in range(optimizersteps):
+        for optstep in range(optimizersteps):
+            losseshistory = []
             # Random shuffle of experiences
             idx = np.random.permutation(range(len(samples)))
             # One step of SGD for each minibatch
             for i in range(nminibatches):
                 batchidx = idx[i*minibatchsize:(i+1)*minibatchsize]
-                ppostep(
+                losses = ppostep(
                     policy=policy,
                     optimizer=optimizer,
                     states=[states[i] for i in batchidx],
                     actions=[actions[i] for i in batchidx],
                     baseprobs=[probs[i] for i in batchidx],
-                    advantages=[advantages[i] for i in batchidx],
-                    values=[values[i] for i in batchidx],
+                    advantages=advantages[batchidx],
+                    values=values[batchidx],
                     epscut=epscut,
                     valuecoef=valuecoef,
                     entcoef=entcoef
                 )
+                losseshistory.append(losses)
+
+            loss, pgloss, valueloss, entropyloss = map(torch.stack, zip(*losseshistory))
+            print(f"Optimizer iteration {optstep+1}: loss {torch.mean(loss):.3f} (pg {torch.mean(pgloss):.3f} "
+                  f"value {torch.mean(valueloss):.3f} entropy {torch.mean(entropyloss):.3f})")
 
         del states, rewards, probs, actions, terminals
 
