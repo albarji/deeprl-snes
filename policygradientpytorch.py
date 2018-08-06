@@ -281,20 +281,32 @@ def generalized_advantage_estimation(values, rewards, terminals, lastvalue, gamm
     return advantages
 
 
+def adjust_learning_rate(optimizer, lr):
+    """Readjusts the learning rate of a given optimizer"""
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+
+
 def train(game, state=None, render=False, checkpoint='policygradient.pt', episodesteps=10000, maxsteps=50000000,
-          restart=False, minibatchsize=32, nminibatches=32, optimizersteps=4, epscut=0.1, gradclip=0.5,
-          valuecoef=1, entcoef=0.01, gamma=0.99, lam=0.95):
+          restart=False, minibatchsize=32, nminibatches=32, optimizersteps=4, epscut_start=0.1, epscut_end=0,
+          gradclip=0.5, valuecoef=1, entcoef=0.01, gamma=0.99, lam=0.95, lr_start=0.00025,
+          lr_end=0):
     """Trains a policy network"""
     env = retro.make(game=game, state=state)
     policy = loadnetwork(env, checkpoint, restart)
     print(policy)
     print("device: {}".format(device))
-    optimizer = optim.Adam(policy.parameters(), lr=1e-4)
+    optimizer = optim.Adam(policy.parameters(), lr=lr_start)
     expgen = experiencegenerator(env, policy, episodesteps=episodesteps, render=render)
 
     totalsteps = 0
     networkupdates = 0
     while totalsteps < maxsteps:
+        # Annealings
+        epscut = np.interp(totalsteps, [0, maxsteps], [epscut_start, epscut_end])
+        lr = np.interp(totalsteps, [0, maxsteps], [lr_start, lr_end])
+        adjust_learning_rate(optimizer, lr)
+
         # Gather experiences
         samples = [next(expgen) for _ in range(minibatchsize*nminibatches)]
         totalsteps += minibatchsize * nminibatches
@@ -349,6 +361,9 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', episod
         if not networkupdates % 10:
             torch.save(policy, checkpoint)
 
+    # Save final model
+    torch.save(policy, checkpoint)
+
 
 def test(game, state=None, render=False, checkpoint='policygradient.pt', saveanimations=False, episodesteps=10000):
     """Tests a previously trained network"""
@@ -389,6 +404,7 @@ if __name__ == "__main__":
     parser.add_argument('--restart', action='store_true', help='Ignore existing checkpoint file, restart from scratch')
     parser.add_argument('--optimizersteps', type=int, default=4, help='Number of optimizer steps in each PPO update')
     parser.add_argument('--episodesteps', type=int, default=10000, help='Max number of steps to run in each episode')
+    parser.add_argument('--maxsteps', type=int, default=50000000, help='Max number of training steps')
 
     args = parser.parse_args()
     if args.test:
@@ -396,4 +412,4 @@ if __name__ == "__main__":
              checkpoint=args.checkpoint, episodesteps=args.episodesteps)
     else:
         train(args.game, args.state, render=args.render, checkpoint=args.checkpoint, restart=args.restart,
-              optimizersteps=args.optimizersteps, episodesteps=args.episodesteps)
+              optimizersteps=args.optimizersteps, episodesteps=args.episodesteps, maxsteps=args.maxsteps)
