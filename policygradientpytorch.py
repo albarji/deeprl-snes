@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.distributions import Bernoulli
+from torch.distributions import Categorical
 import moviepy.editor as mpy
 import argparse
 import skimage
@@ -35,10 +35,38 @@ class RewardScaler(gym.RewardWrapper):
         return reward * self.rewardscaling
 
 
+class SnesDiscretizer(gym.ActionWrapper):
+    """Wrap a gym-retro environment and make it use discrete actions for a SNES game.
+
+    This encodes the prior knowledge that combined actions like UP + RIGHT might be valuable,
+    but actions like A + B + RIGHT + L do not make sense (in general). It also helps making the
+    environment much simpler.
+    """
+    def __init__(self, env):
+        super(SnesDiscretizer, self).__init__(env)
+        buttons = ["B", "Y", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT", "A", "X", "L", "R"]
+        actions = [
+            ['DOWN'], ['LEFT'], ['RIGHT'], ['UP'],  # Basic directions
+            ['DOWN', 'RIGHT'], ['RIGHT', 'UP'], ['UP', 'LEFT'], ['LEFT', 'DOWN'],  # Diagonals
+            ['A'], ['B'], ['X'], ['Y'], ['L'], ['R'], ['SELECT'], ['START']  # Buttons
+        ]
+        self._actions = []
+        for action in actions:
+            arr = np.array([False] * 12)
+            for button in action:
+                arr[buttons.index(button)] = True
+            self._actions.append(arr)
+        self.action_space = gym.spaces.Discrete(len(self._actions))
+
+    def action(self, a):
+        return self._actions[a].copy()
+
+
 def make_env(game, state, rewardscaling=1):
     """Creates the SNES environment"""
     env = retro.make(game=game, state=state)
     env = RewardScaler(env, rewardscaling)
+    env = SnesDiscretizer(env)
     return env
 
 
@@ -89,12 +117,12 @@ class Policy(nn.Module):
         x = F.selu(self.bn2((self.conv2(x))))
         x = F.selu(self.bn3((self.conv3(x))))
         x = F.selu(self.dense(x.view(x.size(0), -1)))
-        return F.sigmoid(self.actionshead(x)), self.valuehead(x)
+        return F.softmax(self.actionshead(x)), self.valuehead(x)
 
     def _outdist(self, state):
         """Computes the probatility distribution of activating each output unit, given an input state"""
         probs, _ = self(state.float().unsqueeze(0))
-        return Bernoulli(probs)
+        return Categorical(probs)
 
     def select_action(self, state):
         """Selects an action following the policy
@@ -111,7 +139,7 @@ class Policy(nn.Module):
         Also returns the value of the current state, for convenience.
         """
         probs, value = self(state.float().unsqueeze(0))
-        m = Bernoulli(probs)
+        m = Categorical(probs)
         return m.log_prob(action), value
 
     def value(self, state):
