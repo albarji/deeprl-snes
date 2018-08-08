@@ -1,6 +1,7 @@
-# Agent that learns how to play a SNES game by using a simple Policy Gradient method
+# Agent that learns how to play a SNES game by using Proximal Policy Optimization
 
 import retro
+import gym
 import numpy as np
 import torch
 import torch.nn as nn
@@ -19,6 +20,26 @@ eps = np.finfo(np.float32).eps.item()
 
 # Initialize device
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+
+class RewardScaler(gym.RewardWrapper):
+    """
+    Bring rewards to a reasonable scale for PPO. This is incredibly important
+    and effects performance a lot.
+    """
+    def __init__(self, env, rewardscaling=1):
+        self.rewardscaling = rewardscaling
+        gym.RewardWrapper.__init__(self, env)
+
+    def reward(self, reward):
+        return reward * self.rewardscaling
+
+
+def make_env(game, state, rewardscaling=1):
+    """Creates the SNES environment"""
+    env = retro.make(game=game, state=state)
+    env = RewardScaler(env, rewardscaling)
+    return env
 
 
 def prepro(image):
@@ -290,9 +311,9 @@ def adjust_learning_rate(optimizer, lr):
 def train(game, state=None, render=False, checkpoint='policygradient.pt', episodesteps=10000, maxsteps=50000000,
           restart=False, minibatchsize=32, nminibatches=32, optimizersteps=4, epscut_start=0.1, epscut_end=0,
           gradclip=0.5, valuecoef=1, entcoef=0.01, gamma=0.99, lam=0.95, lr_start=0.00025,
-          lr_end=0):
+          lr_end=0, rewardscaling=1):
     """Trains a policy network"""
-    env = retro.make(game=game, state=state)
+    env = make_env(game=game, state=state, rewardscaling=rewardscaling)
     policy = loadnetwork(env, checkpoint, restart)
     print(policy)
     print("device: {}".format(device))
@@ -367,7 +388,7 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', episod
 
 def test(game, state=None, render=False, checkpoint='policygradient.pt', saveanimations=False, episodesteps=10000):
     """Tests a previously trained network"""
-    env = retro.make(game=game, state=state)
+    env = make_env(game=game, state=state)
     policy = loadnetwork(env, checkpoint, False)
     print(policy)
     print("device: {}".format(device))
@@ -405,6 +426,7 @@ if __name__ == "__main__":
     parser.add_argument('--optimizersteps', type=int, default=4, help='Number of optimizer steps in each PPO update')
     parser.add_argument('--episodesteps', type=int, default=10000, help='Max number of steps to run in each episode')
     parser.add_argument('--maxsteps', type=int, default=50000000, help='Max number of training steps')
+    parser.add_argument('--rewardscaling', type=float, default=0.01, help='Scaling of rewards in training')
 
     args = parser.parse_args()
     if args.test:
@@ -412,4 +434,5 @@ if __name__ == "__main__":
              checkpoint=args.checkpoint, episodesteps=args.episodesteps)
     else:
         train(args.game, args.state, render=args.render, checkpoint=args.checkpoint, restart=args.restart,
-              optimizersteps=args.optimizersteps, episodesteps=args.episodesteps, maxsteps=args.maxsteps)
+              optimizersteps=args.optimizersteps, episodesteps=args.episodesteps, maxsteps=args.maxsteps,
+              rewardscaling=args.rewardscaling)
