@@ -77,16 +77,12 @@ def prepro(image):
     return image - 0.5  # 0-center
 
 
-def discount_rewards(r, terminals, gamma=0.99):
+def discount_rewards(r, gamma=0.99):
     """Take 1D float array of rewards and compute clipped discounted reward"""
     discounted_r = np.zeros_like(r)
     running_add = 0
-    r = np.sign(r)  # Clip rewards
     for t in reversed(range(0, len(r))):
-        if terminals[t]:
-            running_add = r[t]
-        else:
-            running_add = running_add * gamma + r[t]
+        running_add = running_add * gamma + r[t]
         discounted_r[t] = running_add
 
     return discounted_r
@@ -233,8 +229,8 @@ def experiencegenerator(env, policy, episodesteps=None, render=False, windowleng
         episoderewards.append(rewards)
         episode += 1
         if verbose:
-            print(f"Episode {episode} end, {totalsteps} total steps performed. Reward {rewards:.0f}, "
-                  f"100-episodes average reward {np.mean(episoderewards[-100:]):.0f}")
+            print(f"Episode {episode} end, {totalsteps} total steps performed. Reward {rewards:.2f}, "
+                  f"100-episodes average reward {np.mean(episoderewards[-100:]):.2f}")
 
 
 def loadnetwork(env, checkpoint, restart):
@@ -304,30 +300,29 @@ def ppostep(policy, optimizer, states, actions, baseprobs, values, advantages, e
     return loss, pgloss, valueloss, entropyloss
 
 
-def generalized_advantage_estimation(values, rewards, terminals, lastvalue, gamma, lam):
-    """Estimates a generalized version of the advantage (GAE) of each action, in the PPO-ActorCritic style
+def generalized_advantage_estimation(values, rewards, lastvalue, gamma, lam):
+    """Computes a Generalized Advantage Estimator (GAE)
+
+    This estimator allows computing advantages for any state, even if the current episode
+    is unfinished. To do so, value function estimates are exploited.
 
     Arguments:
         - values: estimated values for each state
         - rewards: iterable of obtained rewards for those states
-        - terminals: iterable of whether each state above is terminal
         - lastvalue: estimated value after all the steps above have been performed
-        - gamma: GAE discount parameter
-        - lam: rewards discount parameter
+        - gamma: rewards discount parameter
+        - lam: GAE discount parameter.
+            For lam close to 1 we have high-variance low-bias estimates
+            For lam close to 0 we have low-variance high-bias estimates
 
-    Reference: https://arxiv.org/pdf/1707.06347.pdf
+    Reference: https://arxiv.org/pdf/1506.02438.pdf
     """
-    # Estimate advantages from last to first state
-    delta = np.zeros(len(values), dtype=np.float32)
-    advantages = np.zeros(len(values), dtype=np.float32)
-    delta[-1] = rewards[-1] + gamma * lastvalue * (not terminals[-1]) - values[-1]
-    advantages[-1] = lastadv = delta[-1]
-    for t in reversed(range(len(values) - 1)):
-        delta[t] = rewards[t] + gamma * values[t + 1] * (not terminals[t]) - values[t]
-        advantages[t] = lastadv = delta[t] + gamma * lam * (not terminals[t]) * lastadv
+    allvalues = np.asarray(values.tolist() + [lastvalue])
+    deltas = rewards + gamma * allvalues[1:] - allvalues[:-1]
+    advantages = discount_rewards(deltas, gamma*lam)
     # Normalize advantages
     advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + eps)
-    return advantages
+    return advantages.astype(np.float32)
 
 
 def adjust_learning_rate(optimizer, lr):
@@ -368,7 +363,6 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', episod
         advantages = generalized_advantage_estimation(
             values=values,
             rewards=rewards,
-            terminals=terminals,
             lastvalue=lastvalue,
             gamma=gamma,
             lam=lam
@@ -455,6 +449,7 @@ if __name__ == "__main__":
     parser.add_argument('--episodesteps', type=int, default=10000, help='Max number of steps to run in each episode')
     parser.add_argument('--maxsteps', type=int, default=50000000, help='Max number of training steps')
     parser.add_argument('--rewardscaling', type=float, default=0.01, help='Scaling of rewards in training')
+    #TODO: maybe we are using too small batches? Check https://github.com/ray-project/ray/blob/master/examples/carla/train_ppo.py#L47
 
     args = parser.parse_args()
     if args.test:
