@@ -210,13 +210,14 @@ def experiencegenerator(env, policy, episodesteps=None, render=False, windowleng
         while True:
             if render:
                 env.render()
-            st = torch.tensor(xbatch).to(device)
-            action, p = policy.select_action(st)
-            newobservation, reward, done, info = env.step(action.tolist()[0])
+            action, lp = policy.select_action(torch.tensor(xbatch).to(device))
+            action = int(action)
+            lp = float(lp)
+            newobservation, reward, done, info = env.step(action)
             x = prepro(newobservation)
             statesqueue.append(x)
             newxbatch = np.stack(statesqueue, axis=0)
-            yield (observation, xbatch, p, action, reward, newobservation, newxbatch, done)
+            yield (observation, xbatch, lp, action, reward, newobservation, newxbatch, done)
             rewards += reward
 
             step += 1
@@ -284,7 +285,7 @@ def ppostep(policy, optimizer, states, actions, baseprobs, values, advantages, e
     entropyloss = - entcoef * torch.mean(torch.stack([policy.entropy(st) for st in states]))
     # Value estimation loss
     # (newvalue - [advantage + oldvalue])^2, that is, make new value closer to estimated error in old estimate
-    # A clipped version of the loss is also included, thus imposing a kind of Huber loss
+    # A clipped version of the loss is also included
     returns = advantages + values
     valuelosses = (newvalues - returns) ** 2
     newvalues_clipped = values + torch.clamp(newvalues - values, epscut)
@@ -332,7 +333,7 @@ def adjust_learning_rate(optimizer, lr):
 
 
 def train(game, state=None, render=False, checkpoint='policygradient.pt', episodesteps=10000, maxsteps=50000000,
-          restart=False, minibatchsize=32, nminibatches=32, optimizersteps=4, epscut_start=0.1, epscut_end=0,
+          restart=False, minibatchsize=128, nminibatches=32, optimizersteps=30, epscut_start=0.1, epscut_end=0,
           gradclip=0.5, valuecoef=1, entcoef=0.01, gamma=0.99, lam=0.95, lr_start=0.00025,
           lr_end=0, rewardscaling=1):
     """Trains a policy network"""
@@ -355,9 +356,8 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', episod
         samples = [next(expgen) for _ in range(minibatchsize*nminibatches)]
         totalsteps += minibatchsize * nminibatches
         _, states, logprobs, actions, rewards, _, newstates, terminals = zip(*samples)
-        states = [torch.tensor(st).to(device) for st in states]
-        probs = [torch.exp(p.detach()) for p in logprobs]
-        values = torch.stack([policy.value(st).detach()[0][0] for st in states])
+        probs = [np.exp(lp) for lp in logprobs]
+        values = torch.stack([policy.value(torch.tensor(st).to(device)).detach()[0][0] for st in states])
         lastvalue = policy.value(torch.tensor(newstates[-1]).to(device)).detach()[0][0]
         # Compute advantages
         advantages = generalized_advantage_estimation(
@@ -381,8 +381,8 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', episod
                 losses = ppostep(
                     policy=policy,
                     optimizer=optimizer,
-                    states=[states[i] for i in batchidx],
-                    actions=[actions[i] for i in batchidx],
+                    states=[torch.tensor(states[i]).to(device) for i in batchidx],
+                    actions=[torch.tensor(actions[i]).to(device) for i in batchidx],
                     baseprobs=[probs[i] for i in batchidx],
                     advantages=advantages[batchidx],
                     values=values[batchidx],
@@ -445,7 +445,7 @@ if __name__ == "__main__":
     parser.add_argument('--saveanimations', action='store_true', help='Save mp4 files with playthroughs')
     parser.add_argument('--test', action='store_true', help='Run in test mode (no policy updates)')
     parser.add_argument('--restart', action='store_true', help='Ignore existing checkpoint file, restart from scratch')
-    parser.add_argument('--optimizersteps', type=int, default=4, help='Number of optimizer steps in each PPO update')
+    parser.add_argument('--optimizersteps', type=int, default=30, help='Number of optimizer steps in each PPO update')
     parser.add_argument('--episodesteps', type=int, default=10000, help='Max number of steps to run in each episode')
     parser.add_argument('--maxsteps', type=int, default=50000000, help='Max number of training steps')
     parser.add_argument('--rewardscaling', type=float, default=0.01, help='Scaling of rewards in training')
