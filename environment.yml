@@ -1,14 +1,19 @@
 name: gym-retro
-channels:
-  - pytorch
+#channels:
+#  - pytorch
 dependencies:
-  - pytorch
-  - torchvision
+  #- pytorch
+  #- torchvision
   - tensorflow-gpu
   - cython
   - scikit-image=0.14.0
+  - opencv=3.4.1
+  #- jupyter=1.0.0
+  #- nb_conda=2.2.1
   - pip:
     - moviepy
-    - tensorforce==0.4.2
-    - gym-retro  # Must be version 0.6 from master
-    - keras-rl==0.4.2
+    #- tensorforce==0.4.2
+    - gym-retro
+    #- keras-rl==0.4.2
+    - ray==0.5.0
+    - lz4==2.1.0
