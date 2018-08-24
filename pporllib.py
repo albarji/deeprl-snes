@@ -158,7 +158,8 @@ def register_snes(game, state):
 
 
 def train(checkpoint):
-    ray.init(num_gpus=0)
+    """Trains a policy network"""
+    ray.init()
     config = ppo.DEFAULT_CONFIG.copy()
     print("PPO config:", config)
     agent = ppo.PPOAgent(config=config, env="snes_env")
@@ -177,13 +178,41 @@ def train(checkpoint):
             checkpoint = agent.save()
             print("checkpoint saved at", checkpoint)
 
+
+def test(checkpoint, num_steps=10000):
+    """Tests and renders a previously trained model"""
+    ray.init()
+    config = ppo.DEFAULT_CONFIG.copy()
+    config["num_workers"] = 1
+    agent = ppo.PPOAgent(config=config, env="snes_env")
+    agent.restore(checkpoint)
+    env = agent.local_evaluator.env
+    steps = 0
+    while steps < (num_steps or steps + 1):
+        state = env.reset()
+        done = False
+        reward_total = 0.0
+        while not done and steps < (num_steps or steps + 1):
+            action = agent.compute_action(state)
+            next_state, reward, done, _ = env.step(action)
+            reward_total += reward
+            env.render()
+            steps += 1
+            state = next_state
+        print("Episode reward", reward_total)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Agent that learns how to play a SNES game by using RLLib.')
     parser.add_argument('game', type=str, help='Game to play. Must be a valid Gym Retro game')
     parser.add_argument('state', type=str, help='State (level) of the game to play')
     parser.add_argument('checkpoint', type=str, help='Checkpoint file in which to save learning progress')
+    parser.add_argument('--test', action='store_true', help='Run in test mode (no policy updates, render environment)')
 
     args = parser.parse_args()
 
     register_snes(args.game, args.state)
-    train(checkpoint=args.checkpoint)
+    if args.test:
+        test(checkpoint=args.checkpoint)
+    else:
+        train(checkpoint=args.checkpoint)
