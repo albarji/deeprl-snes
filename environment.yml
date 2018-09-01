@@ -1,9 +1,9 @@
 name: gym-retro
 #channels:
-#  - pytorch
+  - pytorch
 dependencies:
-  #- pytorch
-  #- torchvision
+  - pytorch
+  - torchvision
   - tensorflow-gpu
   - cython
   - scikit-image=0.14.0

@@ -1,7 +1,6 @@
 # Agent that learns how to play a SNES game by using Proximal Policy Optimization
 
 import retro
-import gym
 import numpy as np
 import torch
 import torch.nn as nn
@@ -13,6 +12,7 @@ import argparse
 import skimage
 from skimage import color
 from collections import deque
+import envs
 
 
 # Environment definitions
@@ -22,51 +22,12 @@ eps = np.finfo(np.float32).eps.item()
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-class RewardScaler(gym.RewardWrapper):
-    """
-    Bring rewards to a reasonable scale for PPO. This is incredibly important
-    and effects performance a lot.
-    """
-    def __init__(self, env, rewardscaling=1):
-        self.rewardscaling = rewardscaling
-        gym.RewardWrapper.__init__(self, env)
-
-    def reward(self, reward):
-        return reward * self.rewardscaling
-
-
-class SnesDiscretizer(gym.ActionWrapper):
-    """Wrap a gym-retro environment and make it use discrete actions for a SNES game.
-
-    This encodes the prior knowledge that combined actions like UP + RIGHT might be valuable,
-    but actions like A + B + RIGHT + L do not make sense (in general). It also helps making the
-    environment much simpler.
-    """
-    def __init__(self, env):
-        super(SnesDiscretizer, self).__init__(env)
-        buttons = ["B", "Y", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT", "A", "X", "L", "R"]
-        actions = [
-            ['DOWN'], ['LEFT'], ['RIGHT'], ['UP'],  # Basic directions
-            ['DOWN', 'RIGHT'], ['RIGHT', 'UP'], ['UP', 'LEFT'], ['LEFT', 'DOWN'],  # Diagonals
-            ['A'], ['B'], ['X'], ['Y'], ['L'], ['R'], ['SELECT'], ['START']  # Buttons
-        ]
-        self._actions = []
-        for action in actions:
-            arr = np.array([False] * 12)
-            for button in action:
-                arr[buttons.index(button)] = True
-            self._actions.append(arr)
-        self.action_space = gym.spaces.Discrete(len(self._actions))
-
-    def action(self, a):
-        return self._actions[a].copy()
-
-
 def make_env(game, state, rewardscaling=1):
     """Creates the SNES environment"""
     env = retro.make(game=game, state=state)
-    env = RewardScaler(env, rewardscaling)
-    env = SnesDiscretizer(env)
+    env = envs.SkipFrames(env)
+    env = envs.RewardScaler(env, rewardscaling)
+    env = envs.discretize_actions(env, game)
     return env
 
 
@@ -93,7 +54,7 @@ class Policy(nn.Module):
 
     action_shape = []
 
-    def __init__(self, env, windowlength=4):
+    def __init__(self, env, game, windowlength=4):
         super(Policy, self).__init__()
 
         self.action_shape = env.action_space.n
@@ -104,7 +65,10 @@ class Policy(nn.Module):
         self.bn2 = nn.BatchNorm2d(64)
         self.conv3 = nn.Conv2d(64, 128, kernel_size=3, stride=2)
         self.bn3 = nn.BatchNorm2d(128)
-        self.dense = nn.Linear(3840, 512)
+        if "Snes" in game:
+            self.dense = nn.Linear(3840, 512)
+        elif "Genesis" in game:
+            self.dense = nn.Linear(5120, 512)
         self.actionshead = nn.Linear(512, self.action_shape)
         self.valuehead = nn.Linear(512, 1)
 
@@ -234,17 +198,17 @@ def experiencegenerator(env, policy, episodesteps=None, render=False, windowleng
                   f"100-episodes average reward {np.mean(episoderewards[-100:]):.2f}")
 
 
-def loadnetwork(env, checkpoint, restart):
+def loadnetwork(env, checkpoint, restart, game):
     """Loads the policy network from a checkpoint"""
     if restart:
-        policy = Policy(env)
+        policy = Policy(env, game)
         print("Restarted policy network from scratch")
     else:
         try:
             policy = torch.load(checkpoint)
             print(f"Resumed checkpoint {checkpoint}")
         except:
-            policy = Policy(env)
+            policy = Policy(env, game)
             print(f"Checkpoint {checkpoint} not found, created policy network from scratch")
     policy.to(device)
     return policy
@@ -338,7 +302,7 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', episod
           lr_end=0, rewardscaling=1):
     """Trains a policy network"""
     env = make_env(game=game, state=state, rewardscaling=rewardscaling)
-    policy = loadnetwork(env, checkpoint, restart)
+    policy = loadnetwork(env, checkpoint, restart, game)
     print(policy)
     print("device: {}".format(device))
     optimizer = optim.Adam(policy.parameters(), lr=lr_start)
@@ -411,7 +375,7 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', episod
 def test(game, state=None, render=False, checkpoint='policygradient.pt', saveanimations=False, episodesteps=10000):
     """Tests a previously trained network"""
     env = make_env(game=game, state=state)
-    policy = loadnetwork(env, checkpoint, False)
+    policy = loadnetwork(env, checkpoint, False, game)
     print(policy)
     print("device: {}".format(device))
 
