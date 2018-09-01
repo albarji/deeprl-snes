@@ -8,18 +8,24 @@ class SkipFrames(gym.Wrapper):
     """Gym wrapper that skips n-1 out every n frames.
 
     This helps training since frame-precise actions are not really needed.
-    In the skipped frames the last performed action is repeated.
+    In the skipped frames the last performed action is repeated, or if a
+    pad_action is provided, such action is used.
     """
-    def __init__(self, env, skip=4):
+    def __init__(self, env, skip=4, pad_action=None):
         gym.Wrapper.__init__(self, env)
         self._skip = skip
+        self._pad_action = pad_action
 
     def step(self, action):
         """Repeat action, sum reward, and max over last observations."""
         total_reward = 0.0
         obs = done = info = None
         for i in range(self._skip):
-            obs, reward, done, info = self.env.step(action)
+            if i == 0 or self._pad_action is None:
+                doact = action
+            else:
+                doact = self._pad_action
+            obs, reward, done, info = self.env.step(doact)
             total_reward += reward
             if done:
                 break
@@ -164,6 +170,7 @@ class GradiusDiscretizer(ButtonsRemapper):
     """
     def __init__(self, env):
         actions = [
+            [],  # No-op
             ['DOWN'], ['LEFT'], ['RIGHT'], ['UP'],  # Basic directions
             ['DOWN', 'RIGHT'], ['RIGHT', 'UP'], ['UP', 'LEFT'], ['LEFT', 'DOWN'],  # Diagonals
             ['A'], ['B'], ['X'], ['Y'], ['L'], ['R'], ['SELECT'], ['START']  # Buttons
@@ -179,6 +186,7 @@ class ColumnsGenesisDiscretizer(ButtonsRemapper):
     """
     def __init__(self, env):
         actions = [
+            [],  # No-op
             ['DOWN'], ['LEFT'], ['RIGHT'],  # Move column around
             ['A']  # Column jewels swap
         ]
@@ -197,5 +205,4 @@ def discretize_actions(env, game):
     if game in discretizers:
         return discretizers[game](env)
     else:
-        print(f"Warning: unknown game {game}, assuming all possible actions")
-        return env
+        raise ValueError(f"ERROR: unknown game {game}, could not discretize actions")

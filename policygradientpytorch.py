@@ -22,12 +22,12 @@ eps = np.finfo(np.float32).eps.item()
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-def make_env(game, state, rewardscaling=1):
+def make_env(game, state, rewardscaling=1, pad_action=None):
     """Creates the SNES environment"""
     env = retro.make(game=game, state=state)
-    env = envs.SkipFrames(env)
     env = envs.RewardScaler(env, rewardscaling)
     env = envs.discretize_actions(env, game)
+    env = envs.SkipFrames(env, pad_action=pad_action)
     return env
 
 
@@ -299,9 +299,9 @@ def adjust_learning_rate(optimizer, lr):
 def train(game, state=None, render=False, checkpoint='policygradient.pt', episodesteps=10000, maxsteps=50000000,
           restart=False, minibatchsize=128, nminibatches=32, optimizersteps=30, epscut_start=0.1, epscut_end=0,
           gradclip=0.5, valuecoef=1, entcoef=0.01, gamma=0.99, lam=0.95, lr_start=0.00025,
-          lr_end=0, rewardscaling=1):
+          lr_end=0, rewardscaling=1, pad_action=None):
     """Trains a policy network"""
-    env = make_env(game=game, state=state, rewardscaling=rewardscaling)
+    env = make_env(game=game, state=state, rewardscaling=rewardscaling, pad_action=pad_action)
     policy = loadnetwork(env, checkpoint, restart, game)
     print(policy)
     print("device: {}".format(device))
@@ -372,9 +372,10 @@ def train(game, state=None, render=False, checkpoint='policygradient.pt', episod
     torch.save(policy, checkpoint)
 
 
-def test(game, state=None, render=False, checkpoint='policygradient.pt', saveanimations=False, episodesteps=10000):
+def test(game, state=None, render=False, checkpoint='policygradient.pt', saveanimations=False,
+         episodesteps=10000, pad_action=None):
     """Tests a previously trained network"""
-    env = make_env(game=game, state=state)
+    env = make_env(game=game, state=state, pad_action=pad_action)
     policy = loadnetwork(env, checkpoint, False, game)
     print(policy)
     print("device: {}".format(device))
@@ -413,13 +414,14 @@ if __name__ == "__main__":
     parser.add_argument('--episodesteps', type=int, default=10000, help='Max number of steps to run in each episode')
     parser.add_argument('--maxsteps', type=int, default=50000000, help='Max number of training steps')
     parser.add_argument('--rewardscaling', type=float, default=0.01, help='Scaling of rewards in training')
+    parser.add_argument('--padaction', type=int, default=None, help='Index of action used to pad skipped frames')
     #TODO: maybe we are using too small batches? Check https://github.com/ray-project/ray/blob/master/examples/carla/train_ppo.py#L47
 
     args = parser.parse_args()
     if args.test:
         test(args.game, args.state, render=args.render, saveanimations=args.saveanimations,
-             checkpoint=args.checkpoint, episodesteps=args.episodesteps)
+             checkpoint=args.checkpoint, episodesteps=args.episodesteps, pad_action=args.padaction)
     else:
         train(args.game, args.state, render=args.render, checkpoint=args.checkpoint, restart=args.restart,
               optimizersteps=args.optimizersteps, episodesteps=args.episodesteps, maxsteps=args.maxsteps,
-              rewardscaling=args.rewardscaling)
+              rewardscaling=args.rewardscaling, pad_action=args.padaction)

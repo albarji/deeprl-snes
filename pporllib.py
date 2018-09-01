@@ -9,23 +9,23 @@ from ray.tune.logger import pretty_print
 import envs
 
 
-def make_env(game, state, rewardscaling=1):
+def make_env(game, state, rewardscaling=1, pad_action=None):
     """Creates the SNES environment"""
     env = retro.make(game=game, state=state)
-    env = envs.SkipFrames(env)
     env = envs.RewardScaler(env, rewardscaling)
     env = envs.discretize_actions(env, game)
+    env = envs.SkipFrames(env, pad_action=pad_action)
     env = envs.WarpFrame(env)
     env = envs.FrameStack(env)
     return env
 
 
-def register_snes(game, state):
+def register_snes(game, state, pad_action):
     """Registers a given SNES game as a ray environment
 
     The environment is registered with name 'snes_env'
     """
-    register_env("snes_env", lambda env_config: make_env(game=game, state=state))
+    register_env("snes_env", lambda env_config: make_env(game=game, state=state, pad_action=pad_action))
 
 
 def train(checkpoint=None):
@@ -81,10 +81,11 @@ if __name__ == "__main__":
     parser.add_argument('state', type=str, help='State (level) of the game to play')
     parser.add_argument('--checkpoint', type=str, help='Checkpoint file from which to load learning progress')
     parser.add_argument('--test', action='store_true', help='Run in test mode (no policy updates, render environment)')
+    parser.add_argument('--padaction', type=int, default=None, help='Index of action used to pad skipped frames')
 
     args = parser.parse_args()
 
-    register_snes(args.game, args.state)
+    register_snes(args.game, args.state, pad_action=args.padaction)
     if args.test:
         test(checkpoint=args.checkpoint)
     else:
