@@ -56,7 +56,25 @@ def test(checkpoint, num_steps=10000):
     """Tests and renders a previously trained model"""
     ray.init()
     config = ppo.DEFAULT_CONFIG.copy()
-    config["num_workers"] = 1
+    # Parameters from https://github.com/ray-project/ray/blob/master/python/ray/rllib/tuned_examples/atari-ppo.yaml
+    config["lambda"] = 0.95
+    config["kl_coeff"] = 0.5
+    config["clip_param"] = 0.1
+    config["entropy_coeff"] = 0.01
+    config["train_batch_size"] = 5000
+    config["sample_batch_size"] = 500
+    config["sgd_minibatch_size"] = 500
+    config["num_sgd_iter"] = 10
+    config["num_workers"] = 10
+    config["num_envs_per_worker"] = 5
+    config["batch_mode"] = "truncate_episodes"
+    config["observation_filter"] = "NoFilter"
+    config["vf_share_layers"] = True
+    config["num_gpus"] = 1
+    config["lr_schedule"] = [
+        [0, 0.0007],
+        [20000000, 0.000000000001],
+    ]
     agent = ppo.PPOAgent(config=config, env="snes_env")
     agent.restore(checkpoint)
     env = agent.local_evaluator.env

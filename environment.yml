@@ -15,5 +15,5 @@ dependencies:
     #- tensorforce==0.4.2
     - gym-retro  # Need version 0.5.6, still in development
     #- keras-rl==0.4.2
-    - ray==0.5.0
+    - ray==0.5.2
     - lz4==2.1.0
