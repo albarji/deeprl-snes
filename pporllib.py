@@ -7,33 +7,32 @@ import ray.rllib.agents.ppo as ppo
 from ray.tune import register_env
 from ray.tune.logger import pretty_print
 import envs
+import time
 
 
-def make_env(game, state, rewardscaling=1, pad_action=None):
+def make_env(game, state, rewardscaling=1, pad_action=None, keepcolor=False):
     """Creates the SNES environment"""
     env = retro.make(game=game, state=state)
     env = envs.RewardScaler(env, rewardscaling)
     env = envs.discretize_actions(env, game)
     env = envs.SkipFrames(env, pad_action=pad_action)
-    env = envs.WarpFrame(env)
+    env = envs.WarpFrame(env, togray=not keepcolor)
     env = envs.FrameStack(env)
     return env
 
 
-def register_snes(game, state, pad_action):
+def register_snes(game, state, pad_action, keepcolor):
     """Registers a given SNES game as a ray environment
 
     The environment is registered with name 'snes_env'
     """
-    register_env("snes_env", lambda env_config: make_env(game=game, state=state, pad_action=pad_action))
+    register_env("snes_env", lambda env_config: make_env(game=game, state=state, pad_action=pad_action,
+                                                         keepcolor=keepcolor))
 
 
-def train(checkpoint=None):
-    """Trains a policy network"""
-    ray.init()
-    config = ppo.DEFAULT_CONFIG.copy()
-    print("Default PPO config:", config)
-    # Parameters from https://github.com/ray-project/ray/blob/master/python/ray/rllib/tuned_examples/atari-ppo.yaml
+def add_ppo_params(cfg):
+    """Returns a modified configuration with PPO parameters"""
+    config = cfg.copy()
     config["lambda"] = 0.95
     config["kl_coeff"] = 0.5
     config["clip_param"] = 0.1
@@ -50,6 +49,16 @@ def train(checkpoint=None):
         [0, 0.0007],
         [20000000, 0.000000000001],
     ]
+    return config
+
+
+def train(checkpoint=None):
+    """Trains a policy network"""
+    ray.init()
+    config = ppo.DEFAULT_CONFIG.copy()
+    print("Default PPO config:", config)
+    # Parameters from https://github.com/ray-project/ray/blob/master/python/ray/rllib/tuned_examples/atari-ppo.yaml
+    config = add_ppo_params(config)
     print("PPO config:", config)
     agent = ppo.PPOAgent(config=config, env="snes_env")
     if checkpoint is not None:
@@ -70,10 +79,11 @@ def train(checkpoint=None):
             print("checkpoint saved at", checkpoint)
 
 
-def test(checkpoint, num_steps=10000):
+def test(checkpoint, num_steps=10000, testdelay=0):
     """Tests and renders a previously trained model"""
     ray.init()
     config = ppo.DEFAULT_CONFIG.copy()
+    config = add_ppo_params(config)
     agent = ppo.PPOAgent(config=config, env="snes_env")
     agent.restore(checkpoint)
     env = agent.local_evaluator.env
@@ -85,6 +95,7 @@ def test(checkpoint, num_steps=10000):
         while not done and steps < (num_steps or steps + 1):
             action = agent.compute_action(state)
             next_state, reward, done, _ = env.step(action)
+            time.sleep(testdelay)
             reward_total += reward
             env.render()
             steps += 1
@@ -99,11 +110,14 @@ if __name__ == "__main__":
     parser.add_argument('--checkpoint', type=str, help='Checkpoint file from which to load learning progress')
     parser.add_argument('--test', action='store_true', help='Run in test mode (no policy updates, render environment)')
     parser.add_argument('--padaction', type=int, default=None, help='Index of action used to pad skipped frames')
+    parser.add_argument('--keepcolor', action='store_true', help='Keep colors in image processing')
+    parser.add_argument('--testdelay', type=float, default=0,
+                        help='Introduced delay between test frames. Useful for debugging')
 
     args = parser.parse_args()
 
-    register_snes(args.game, args.state, pad_action=args.padaction)
+    register_snes(args.game, args.state, pad_action=args.padaction, keepcolor=args.keepcolor)
     if args.test:
-        test(checkpoint=args.checkpoint)
+        test(checkpoint=args.checkpoint, testdelay=args.testdelay)
     else:
         train(checkpoint=args.checkpoint)
