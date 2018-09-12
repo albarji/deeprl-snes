@@ -8,11 +8,14 @@ from ray.tune import register_env
 from ray.tune.logger import pretty_print
 import envs
 import time
+from gym import wrappers
 
 
-def make_env(game, state, rewardscaling=1, pad_action=None, keepcolor=False):
+def make_env(game, state, rewardscaling=1, pad_action=None, keepcolor=False, videodir=None):
     """Creates the SNES environment"""
     env = retro.make(game=game, state=state)
+    if videodir is not None:
+        env = wrappers.Monitor(env, videodir, force=True, video_callable=lambda episode_id: True)
     env = envs.RewardScaler(env, rewardscaling)
     env = envs.discretize_actions(env, game)
     env = envs.SkipFrames(env, pad_action=pad_action)
@@ -21,13 +24,12 @@ def make_env(game, state, rewardscaling=1, pad_action=None, keepcolor=False):
     return env
 
 
-def register_snes(game, state, pad_action, keepcolor):
+def register_snes(game, state, **kwargs):
     """Registers a given SNES game as a ray environment
 
     The environment is registered with name 'snes_env'
     """
-    register_env("snes_env", lambda env_config: make_env(game=game, state=state, pad_action=pad_action,
-                                                         keepcolor=keepcolor))
+    register_env("snes_env", lambda env_config: make_env(game=game, state=state, **kwargs))
 
 
 def add_ppo_params(cfg):
@@ -113,10 +115,11 @@ if __name__ == "__main__":
     parser.add_argument('--keepcolor', action='store_true', help='Keep colors in image processing')
     parser.add_argument('--testdelay', type=float, default=0,
                         help='Introduced delay between test frames. Useful for debugging')
+    parser.add_argument('--videodir', type=str, default=None, help='Directory in which to save playthrough videos')
 
     args = parser.parse_args()
 
-    register_snes(args.game, args.state, pad_action=args.padaction, keepcolor=args.keepcolor)
+    register_snes(args.game, args.state, pad_action=args.padaction, keepcolor=args.keepcolor, videodir=args.videodir)
     if args.test:
         test(checkpoint=args.checkpoint, testdelay=args.testdelay)
     else:
