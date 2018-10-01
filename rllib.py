@@ -1,9 +1,10 @@
-# Agent that learns how to play a SNES game by using RLLib implementation of PPO
+# Agent that learns how to play a SNES game by using RLLib algorithms
 
 import retro
 import argparse
 import ray
-import ray.rllib.agents.ppo as ppo
+from ray.rllib.agents import ppo
+from ray.rllib.agents import impala
 from ray.tune import register_env
 from ray.tune.logger import pretty_print
 import envs
@@ -32,37 +33,61 @@ def register_snes(game, state, **kwargs):
     register_env("snes_env", lambda env_config: make_env(game=game, state=state, **kwargs))
 
 
-def add_ppo_params(cfg):
-    """Returns a modified configuration with PPO parameters"""
-    config = cfg.copy()
-    config["lambda"] = 0.95
-    config["kl_coeff"] = 0.5
-    config["clip_param"] = 0.1
-    config["entropy_coeff"] = 0.01
-    config["sample_batch_size"] = 500
-    config["num_sgd_iter"] = 10
-    config["num_workers"] = 4
-    config["num_envs_per_worker"] = 1
-    config["batch_mode"] = "truncate_episodes"
-    config["observation_filter"] = "NoFilter"
-    config["vf_share_layers"] = True
-    config["num_gpus"] = 1
-    config["lr_schedule"] = [
-        [0, 0.0007],
-        [20000000, 0.000000000001],
-    ]
-    return config
+"""Algorithm configuration parameters."""
+ALGORITHMS = {
+    # Parameters from https://github.com/ray-project/ray/blob/master/python/ray/rllib/tuned_examples/atari-ppo.yaml
+    "PPO": {
+        "class": ppo.PPOAgent,
+        "default_conf": ppo.DEFAULT_CONFIG,
+        "conf": {
+            "lambda": 0.95,
+            "kl_coeff": 0.5,
+            "clip_param": 0.1,
+            "entropy_coeff": 0.01,
+            "sample_batch_size": 500,
+            "num_sgd_iter": 10,
+            "num_envs_per_worker": 1,
+            "batch_mode": "truncate_episodes",
+            "observation_filter": "NoFilter",
+            "vf_share_layers": True,
+            "num_gpus": 1,
+            "lr_schedule": [
+                [0, 0.0005],
+                [20000000, 0.000000000001],
+            ]
+        }
+    },
+    # Parameters from https://github.com/ray-project/ray/blob/master/python/ray/rllib/tuned_examples/atari-impala.yaml
+    "IMPALA": {
+        "class": impala.ImpalaAgent,
+        "default_conf": impala.DEFAULT_CONFIG,
+        "conf": {
+            'sample_batch_size': 50,
+            'train_batch_size': 500,
+            'num_envs_per_worker': 1,
+            'lr_schedule': [
+                [0, 0.0005],
+                [20000000, 0.000000000001],
+            ],
+            'sample_async': True
+        }
+    }
+}
 
 
-def train(checkpoint=None):
+def create_config(alg="PPO", workers=4):
+    """Returns a learning algorithm configuration"""
+    if alg not in ALGORITHMS:
+        raise ValueError(f"Unknown algorithm {alg}, must be one of {list(ALGORITHMS.keys())}")
+    return {**ALGORITHMS[alg]["default_conf"], **ALGORITHMS[alg]["conf"], **{"num_workers": workers}}
+
+
+def train(checkpoint=None, alg="PPO", workers=4):
     """Trains a policy network"""
     ray.init()
-    config = ppo.DEFAULT_CONFIG.copy()
-    print("Default PPO config:", config)
-    # Parameters from https://github.com/ray-project/ray/blob/master/python/ray/rllib/tuned_examples/atari-ppo.yaml
-    config = add_ppo_params(config)
-    print("PPO config:", config)
-    agent = ppo.PPOAgent(config=config, env="snes_env")
+    config = create_config(alg, workers)
+    print(f"Config for {alg}:", config)
+    agent = ALGORITHMS[alg]["class"](config=config, env="snes_env")
     if checkpoint is not None:
         try:
             agent.restore(checkpoint)
@@ -84,8 +109,7 @@ def train(checkpoint=None):
 def test(checkpoint, num_steps=10000, testdelay=0):
     """Tests and renders a previously trained model"""
     ray.init()
-    config = ppo.DEFAULT_CONFIG.copy()
-    config = add_ppo_params(config)
+    config = create_config()
     agent = ppo.PPOAgent(config=config, env="snes_env")
     agent.restore(checkpoint)
     env = agent.local_evaluator.env
@@ -116,6 +140,8 @@ if __name__ == "__main__":
     parser.add_argument('--testdelay', type=float, default=0,
                         help='Introduced delay between test frames. Useful for debugging')
     parser.add_argument('--videodir', type=str, default=None, help='Directory in which to save playthrough videos')
+    parser.add_argument('--algorithm', type=str, default="PPO", help=f'Algorithm to use for training: {ALGORITHMS}')
+    parser.add_argument('--workers', type=int, default=4, help='Number of workers to use during training')
 
     args = parser.parse_args()
 
@@ -123,4 +149,4 @@ if __name__ == "__main__":
     if args.test:
         test(checkpoint=args.checkpoint, testdelay=args.testdelay)
     else:
-        train(checkpoint=args.checkpoint)
+        train(checkpoint=args.checkpoint, alg=args.algorithm, workers=args.workers)
