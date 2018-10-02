@@ -2,6 +2,7 @@ import numpy as np
 import cv2
 from collections import deque
 import gym
+import moviepy.editor as mpy
 
 
 class SkipFrames(gym.Wrapper):
@@ -215,3 +216,12 @@ def discretize_actions(env, game):
         return discretizers[game](env)
     else:
         raise ValueError(f"ERROR: unknown game {game}, could not discretize actions")
+
+
+def saveanimation(rawframes, filename):
+    """Saves a sequence of frames as an animation
+
+    The filename must include an appropriate video extension
+    """
+    clip = mpy.ImageSequenceClip(rawframes, fps=60)
+    clip.write_videofile(filename)

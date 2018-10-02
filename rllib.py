@@ -3,20 +3,19 @@
 import retro
 import argparse
 import ray
-from ray.rllib.agents import ppo
-from ray.rllib.agents import impala
+from ray.rllib.agents import ppo, impala
+from ray.rllib.agents.agent import get_agent_class
 from ray.tune import register_env
 from ray.tune.logger import pretty_print
 import envs
 import time
-from gym import wrappers
+import skimage
+from skimage import color
 
 
-def make_env(game, state, rewardscaling=1, pad_action=None, keepcolor=False, videodir=None):
+def make_env(game, state, rewardscaling=1, pad_action=None, keepcolor=False):
     """Creates the SNES environment"""
     env = retro.make(game=game, state=state)
-    if videodir is not None:
-        env = wrappers.Monitor(env, videodir, force=True, video_callable=lambda episode_id: True)
     env = envs.RewardScaler(env, rewardscaling)
     env = envs.discretize_actions(env, game)
     env = envs.SkipFrames(env, pad_action=pad_action)
@@ -26,18 +25,17 @@ def make_env(game, state, rewardscaling=1, pad_action=None, keepcolor=False, vid
 
 
 def register_snes(game, state, **kwargs):
-    """Registers a given SNES game as a ray environment
+    """Registers a given retro game as a ray environment
 
-    The environment is registered with name 'snes_env'
+    The environment is registered with name 'retro-v0'
     """
-    register_env("snes_env", lambda env_config: make_env(game=game, state=state, **kwargs))
+    register_env("retro-v0", lambda env_config: make_env(game=game, state=state, **kwargs))
 
 
 """Algorithm configuration parameters."""
 ALGORITHMS = {
     # Parameters from https://github.com/ray-project/ray/blob/master/python/ray/rllib/tuned_examples/atari-ppo.yaml
     "PPO": {
-        "class": ppo.PPOAgent,
         "default_conf": ppo.DEFAULT_CONFIG,
         "conf": {
             "lambda": 0.95,
@@ -59,7 +57,6 @@ ALGORITHMS = {
     },
     # Parameters from https://github.com/ray-project/ray/blob/master/python/ray/rllib/tuned_examples/atari-impala.yaml
     "IMPALA": {
-        "class": impala.ImpalaAgent,
         "default_conf": impala.DEFAULT_CONFIG,
         "conf": {
             'sample_batch_size': 50,
@@ -87,7 +84,7 @@ def train(checkpoint=None, alg="PPO", workers=4):
     ray.init()
     config = create_config(alg, workers)
     print(f"Config for {alg}:", config)
-    agent = ALGORITHMS[alg]["class"](config=config, env="snes_env")
+    agent = get_agent_class(alg)(config=config, env="retro-v0")
     if checkpoint is not None:
         try:
             agent.restore(checkpoint)
@@ -106,15 +103,17 @@ def train(checkpoint=None, alg="PPO", workers=4):
             print("checkpoint saved at", checkpoint)
 
 
-def test(checkpoint, num_steps=10000, testdelay=0):
+def test(checkpoint, num_steps=10000, testdelay=0, alg="PPO", render=False, makemovie=False):
     """Tests and renders a previously trained model"""
     ray.init()
-    config = create_config()
-    agent = ppo.PPOAgent(config=config, env="snes_env")
+    config = create_config(alg, workers=1)
+    agent = get_agent_class(alg)(config=config, env="retro-v0")
     agent.restore(checkpoint)
     env = agent.local_evaluator.env
     steps = 0
     while steps < (num_steps or steps + 1):
+        rawframes = []
+        states = []
         state = env.reset()
         done = False
         reward_total = 0.0
@@ -123,14 +122,22 @@ def test(checkpoint, num_steps=10000, testdelay=0):
             next_state, reward, done, _ = env.step(action)
             time.sleep(testdelay)
             reward_total += reward
-            env.render()
-            steps += 1
+            if render:
+                env.render()
+            if makemovie:
+                rawframes.append(env.render(mode="rgb_array"))
+                states.append(next_state)
             state = next_state
+            steps += 1
+        if makemovie:
+            envs.saveanimation(rawframes, f"{alg}_reward{reward_total}.mp4")
+            envs.saveanimation([skimage.img_as_ubyte(color.gray2rgb(st[:, :, -1])) for st in states],
+                               f"{alg}_reward{reward_total}_processed.mp4")
         print("Episode reward", reward_total)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Agent that learns how to play a SNES game by using RLLib.')
+    parser = argparse.ArgumentParser(description='Agent that learns how to play a retro game by using RLLib.')
     parser.add_argument('game', type=str, help='Game to play. Must be a valid Gym Retro game')
     parser.add_argument('state', type=str, help='State (level) of the game to play')
     parser.add_argument('--checkpoint', type=str, help='Checkpoint file from which to load learning progress')
@@ -139,14 +146,16 @@ if __name__ == "__main__":
     parser.add_argument('--keepcolor', action='store_true', help='Keep colors in image processing')
     parser.add_argument('--testdelay', type=float, default=0,
                         help='Introduced delay between test frames. Useful for debugging')
-    parser.add_argument('--videodir', type=str, default=None, help='Directory in which to save playthrough videos')
+    parser.add_argument('--render', action='store_true', help='Render test episodes')
+    parser.add_argument('--makemovie', action='store_true', help='Save videos of test episodes')
     parser.add_argument('--algorithm', type=str, default="PPO", help=f'Algorithm to use for training: {ALGORITHMS}')
     parser.add_argument('--workers', type=int, default=4, help='Number of workers to use during training')
 
     args = parser.parse_args()
 
-    register_snes(args.game, args.state, pad_action=args.padaction, keepcolor=args.keepcolor, videodir=args.videodir)
+    register_snes(args.game, args.state, pad_action=args.padaction, keepcolor=args.keepcolor)
     if args.test:
-        test(checkpoint=args.checkpoint, testdelay=args.testdelay)
+        test(checkpoint=args.checkpoint, testdelay=args.testdelay, alg=args.algorithm, render=args.render,
+             makemovie=args.makemovie)
     else:
         train(checkpoint=args.checkpoint, alg=args.algorithm, workers=args.workers)

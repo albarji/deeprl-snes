@@ -112,15 +112,6 @@ class Policy(nn.Module):
         return torch.sum(self._outdist(state).entropy())
 
 
-def saveanimation(rawframes, filename):
-    """Saves a sequence of frames as an animation
-
-    The filename must include an appropriate video extension
-    """
-    clip = mpy.ImageSequenceClip(rawframes, fps=60)
-    clip.write_videofile(filename)
-
-
 def runepisode(env, policy, episodesteps, render, windowlength=4):
     """Runs an episode under the given policy
 
@@ -392,9 +383,9 @@ def test(game, state=None, render=False, checkpoint='policygradient.pt', saveani
 
         # Save animation (if requested)
         if saveanimations:
-            saveanimation(list(observations), f"{checkpoint}_episode{episode}.mp4")
-            saveanimation([skimage.img_as_ubyte(color.gray2rgb(st[-1] + 0.5)) for st in states],
-                          f"{checkpoint}_processed_episode{episode}.mp4")
+            envs.saveanimation(list(observations), f"{checkpoint}_episode{episode}.mp4")
+            envs.saveanimation([skimage.img_as_ubyte(color.gray2rgb(st[-1] + 0.5)) for st in states],
+                               f"{checkpoint}_processed_episode{episode}.mp4")
 
         episode += 1
         del history, observations, states, rewards
