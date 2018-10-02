@@ -64,7 +64,7 @@ ALGORITHMS = {
             'num_envs_per_worker': 1,
             'lr_schedule': [
                 [0, 0.0005],
-                [20000000, 0.000000000001],
+                [50000000, 0.000000000001],
             ],
             'sample_async': True
         }
