@@ -64,7 +64,7 @@ ALGORITHMS = {
             'num_envs_per_worker': 1,
             'lr_schedule': [
                 [0, 0.0005],
-                [50000000, 0.000000000001],
+                [200000000, 0.000000000001],
             ],
             'sample_async': True
         }
@@ -148,7 +148,8 @@ if __name__ == "__main__":
                         help='Introduced delay between test frames. Useful for debugging')
     parser.add_argument('--render', action='store_true', help='Render test episodes')
     parser.add_argument('--makemovie', action='store_true', help='Save videos of test episodes')
-    parser.add_argument('--algorithm', type=str, default="PPO", help=f'Algorithm to use for training: {ALGORITHMS}')
+    parser.add_argument('--algorithm', type=str, default="IMPALA",
+                        help=f'Algorithm to use for training: {list(ALGORITHMS.keys())}')
     parser.add_argument('--workers', type=int, default=4, help='Number of workers to use during training')
 
     args = parser.parse_args()
