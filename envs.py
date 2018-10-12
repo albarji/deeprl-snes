@@ -197,7 +197,10 @@ class ColumnsGenesisDiscretizer(ButtonsRemapper):
     def __init__(self, env):
         actions = [
             [],  # No-op
-            ['DOWN'], ['LEFT'], ['RIGHT'],  # Move column around
+            ['LEFT'], ['RIGHT'],  # Move column around
+            # ['DOWN'],  # Speed up column fall to get additional points
+                         # It is better not to allow this action because the agent gets stuck
+                         # in the easy strategy of just dropping columns fast
             ['A']  # Column jewels swap
         ]
         super(ColumnsGenesisDiscretizer, self).__init__(env, GENESIS_BUTTONS, actions)

@@ -11,6 +11,8 @@ import envs
 import time
 import skimage
 from skimage import color
+import numpy as np
+from functools import partial
 
 
 def make_env(game, state, rewardscaling=1, pad_action=None, keepcolor=False):
@@ -24,12 +26,14 @@ def make_env(game, state, rewardscaling=1, pad_action=None, keepcolor=False):
     return env
 
 
-def register_snes(game, state, **kwargs):
+def register_retro(game, state, **kwargs):
     """Registers a given retro game as a ray environment
 
     The environment is registered with name 'retro-v0'
     """
-    register_env("retro-v0", lambda env_config: make_env(game=game, state=state, **kwargs))
+    env_creator = lambda env_config: make_env(game=game, state=state, **kwargs)
+    register_env("retro-v0", env_creator)
+    return partial(env_creator, {})
 
 
 """Algorithm configuration parameters."""
@@ -68,6 +72,11 @@ ALGORITHMS = {
             ],
             'sample_async': True
         }
+    },
+    # Random agent for testing purposes
+    "random": {
+        "default_conf": {},
+        "conf": {}
     }
 }
 
@@ -103,13 +112,19 @@ def train(checkpoint=None, alg="PPO", workers=4):
             print("checkpoint saved at", checkpoint)
 
 
-def test(checkpoint, num_steps=10000, testdelay=0, alg="PPO", render=False, makemovie=False):
+def test(checkpoint=None, num_steps=10000, testdelay=0, alg="PPO", render=False, makemovie=False, envcreator=None):
     """Tests and renders a previously trained model"""
     ray.init()
     config = create_config(alg, workers=1)
-    agent = get_agent_class(alg)(config=config, env="retro-v0")
-    agent.restore(checkpoint)
-    env = agent.local_evaluator.env
+    if alg == "random":
+        env = envcreator()
+    else:
+        agent = get_agent_class(alg)(config=config, env="retro-v0")
+        if checkpoint is None:
+            raise ValueError(f"A previously trained checkpoint must be provided for algorithm {alg}")
+        agent.restore(checkpoint)
+        env = agent.local_evaluator.env
+
     steps = 0
     while steps < (num_steps or steps + 1):
         rawframes = []
@@ -118,7 +133,10 @@ def test(checkpoint, num_steps=10000, testdelay=0, alg="PPO", render=False, make
         done = False
         reward_total = 0.0
         while not done and steps < (num_steps or steps + 1):
-            action = agent.compute_action(state)
+            if alg == "random":
+                action = np.random.choice(range(env.action_space.n))
+            else:
+                action = agent.compute_action(state)
             next_state, reward, done, _ = env.step(action)
             time.sleep(testdelay)
             reward_total += reward
@@ -154,9 +172,9 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    register_snes(args.game, args.state, pad_action=args.padaction, keepcolor=args.keepcolor)
+    envcreator = register_retro(args.game, args.state, pad_action=args.padaction, keepcolor=args.keepcolor)
     if args.test:
         test(checkpoint=args.checkpoint, testdelay=args.testdelay, alg=args.algorithm, render=args.render,
-             makemovie=args.makemovie)
+             makemovie=args.makemovie, envcreator=envcreator)
     else:
         train(checkpoint=args.checkpoint, alg=args.algorithm, workers=args.workers)
