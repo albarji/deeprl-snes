@@ -15,12 +15,12 @@ import numpy as np
 from functools import partial
 
 
-def make_env(game, state, rewardscaling=1, pad_action=None, keepcolor=False):
+def make_env(game, state, rewardscaling=1, skipframes=4, pad_action=None, keepcolor=False):
     """Creates the SNES environment"""
     env = retro.make(game=game, state=state)
     env = envs.RewardScaler(env, rewardscaling)
     env = envs.discretize_actions(env, game)
-    env = envs.SkipFrames(env, pad_action=pad_action)
+    env = envs.SkipFrames(env, skip=skipframes, pad_action=pad_action)
     env = envs.WarpFrame(env, togray=not keepcolor)
     env = envs.FrameStack(env)
     return env
@@ -112,7 +112,7 @@ def train(checkpoint=None, alg="PPO", workers=4):
             print("checkpoint saved at", checkpoint)
 
 
-def test(checkpoint=None, num_steps=10000, testdelay=0, alg="PPO", render=False, makemovie=False, envcreator=None):
+def test(checkpoint=None, testdelay=0, alg="PPO", render=False, makemovie=False, envcreator=None, keepcolor=False):
     """Tests and renders a previously trained model"""
     ray.init()
     config = create_config(alg, workers=1)
@@ -125,14 +125,13 @@ def test(checkpoint=None, num_steps=10000, testdelay=0, alg="PPO", render=False,
         agent.restore(checkpoint)
         env = agent.local_evaluator.env
 
-    steps = 0
-    while steps < (num_steps or steps + 1):
+    while True:
         rawframes = []
         states = []
         state = env.reset()
         done = False
         reward_total = 0.0
-        while not done and steps < (num_steps or steps + 1):
+        while not done:
             if alg == "random":
                 action = np.random.choice(range(env.action_space.n))
             else:
@@ -146,10 +145,13 @@ def test(checkpoint=None, num_steps=10000, testdelay=0, alg="PPO", render=False,
                 rawframes.append(env.render(mode="rgb_array"))
                 states.append(next_state)
             state = next_state
-            steps += 1
         if makemovie:
             envs.saveanimation(rawframes, f"{alg}_reward{reward_total}.mp4")
-            envs.saveanimation([skimage.img_as_ubyte(color.gray2rgb(st[:, :, -1])) for st in states],
+            processedframes = [
+                st[:, :, -3:] if keepcolor else color.gray2rgb(st[:, :, -1])
+                for st in states
+            ]
+            envs.saveanimation([skimage.img_as_ubyte(f) for f in processedframes],
                                f"{alg}_reward{reward_total}_processed.mp4")
         print("Episode reward", reward_total)
 
@@ -160,6 +162,7 @@ if __name__ == "__main__":
     parser.add_argument('state', type=str, help='State (level) of the game to play')
     parser.add_argument('--checkpoint', type=str, help='Checkpoint file from which to load learning progress')
     parser.add_argument('--test', action='store_true', help='Run in test mode (no policy updates, render environment)')
+    parser.add_argument('--skipframes', type=int, default=4, help='Run the environment in groups of N frames')
     parser.add_argument('--padaction', type=int, default=None, help='Index of action used to pad skipped frames')
     parser.add_argument('--keepcolor', action='store_true', help='Keep colors in image processing')
     parser.add_argument('--testdelay', type=float, default=0,
@@ -172,9 +175,10 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    envcreator = register_retro(args.game, args.state, pad_action=args.padaction, keepcolor=args.keepcolor)
+    envcreator = register_retro(args.game, args.state, skipframes=args.skipframes,
+                                pad_action=args.padaction, keepcolor=args.keepcolor)
     if args.test:
         test(checkpoint=args.checkpoint, testdelay=args.testdelay, alg=args.algorithm, render=args.render,
-             makemovie=args.makemovie, envcreator=envcreator)
+             makemovie=args.makemovie, envcreator=envcreator, keepcolor=args.keepcolor)
     else:
         train(checkpoint=args.checkpoint, alg=args.algorithm, workers=args.workers)
