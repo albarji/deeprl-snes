@@ -206,6 +206,24 @@ class ColumnsGenesisDiscretizer(ButtonsRemapper):
         super(ColumnsGenesisDiscretizer, self).__init__(env, GENESIS_BUTTONS, actions)
 
 
+class ComixZoneDiscretizer(ButtonsRemapper):
+    """Wrap a gym-retro environment and make it use discrete actions for the Comix Zone game.
+
+    This encodes the prior knowledge that in Columns it only makes sense to use LEFT, RIGHT, DOWN
+    and column swap (A)
+    """
+    def __init__(self, env):
+        actions = [
+            [],  # No-op
+            ['LEFT'], ['RIGHT'],  # Move around
+            ['B'], ['B', 'LEFT'], ['B', 'RIGHT'],  # Jump at different angles
+            ['DOWN'],  # Crouch
+            ['A'], ['A', 'DOWN'], ['A', 'LEFT'], ['A', 'RIGHT'], ['A', 'UP'],  # Attacks
+            ['X'], ['Y'], ['Z'],  # Use items
+        ]
+        super(ComixZoneDiscretizer, self).__init__(env, GENESIS_BUTTONS, actions)
+
+
 def discretize_actions(env, game):
     """Modifies a gym environment to discretize the set of possible actions
 
@@ -213,7 +231,8 @@ def discretize_actions(env, game):
     """
     discretizers = {
         "Columns-Genesis": ColumnsGenesisDiscretizer,
-        "GradiusIII-Snes": GradiusDiscretizer
+        "GradiusIII-Snes": GradiusDiscretizer,
+        "ComixZone-Genesis": ComixZoneDiscretizer
     }
     if game in discretizers:
         return discretizers[game](env)
