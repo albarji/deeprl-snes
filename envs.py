@@ -207,11 +207,7 @@ class ColumnsGenesisDiscretizer(ButtonsRemapper):
 
 
 class ComixZoneDiscretizer(ButtonsRemapper):
-    """Wrap a gym-retro environment and make it use discrete actions for the Comix Zone game.
-
-    This encodes the prior knowledge that in Columns it only makes sense to use LEFT, RIGHT, DOWN
-    and column swap (A)
-    """
+    """Wrap a gym-retro environment and make it use discrete actions for the Comix Zone game"""
     def __init__(self, env):
         actions = [
             [],  # No-op
@@ -224,6 +220,21 @@ class ComixZoneDiscretizer(ButtonsRemapper):
         super(ComixZoneDiscretizer, self).__init__(env, GENESIS_BUTTONS, actions)
 
 
+class SuperMarioWorldDiscretizer(ButtonsRemapper):
+    """Wrap a gym-retro environment and make it use discrete actions for the Super Mario World game"""
+    def __init__(self, env):
+        actions = [
+            [],  # No-op
+            ['LEFT'], ['RIGHT'],  # Move around
+            ['A'], ['A', 'LEFT'], ['A', 'RIGHT'],  # Spin jumps
+            ['B'], ['B', 'LEFT'], ['B', 'RIGHT'],  # Normal jumps
+            ['X'], ['X', 'LEFT'], ['X', 'RIGHT'],  # Run
+            ['DOWN'],  # Crouch
+            ['SELECT']  # Drops reserve item
+        ]
+        super(SuperMarioWorldDiscretizer, self).__init__(env, SNES_BUTTONS, actions)
+
+
 def discretize_actions(env, game):
     """Modifies a gym environment to discretize the set of possible actions
 
@@ -231,8 +242,9 @@ def discretize_actions(env, game):
     """
     discretizers = {
         "Columns-Genesis": ColumnsGenesisDiscretizer,
+        "ComixZone-Genesis": ComixZoneDiscretizer,
         "GradiusIII-Snes": GradiusDiscretizer,
-        "ComixZone-Genesis": ComixZoneDiscretizer
+        "SuperMarioWorld-Snes": SuperMarioWorldDiscretizer
     }
     if game in discretizers:
         return discretizers[game](env)
