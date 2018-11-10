@@ -235,6 +235,21 @@ class SuperMarioWorldDiscretizer(ButtonsRemapper):
         super(SuperMarioWorldDiscretizer, self).__init__(env, SNES_BUTTONS, actions)
 
 
+class DonkeyKongCountryDiscretizer(ButtonsRemapper):
+    """Wrap a gym-retro environment and make it use discrete actions for the Donkey Kong Country game"""
+    def __init__(self, env):
+        actions = [
+            [],  # No-op
+            ['A'],  # Switch monkeys
+            ['B'],  # Jump/swim
+            ['Y'],  # Pick/run
+            ['LEFT'], ['RIGHT'],  # Move around
+            ['Y'], ['Y', 'LEFT'], ['Y', 'RIGHT'],  # Run
+            ['DOWN']  # Crouch
+        ]
+        super(DonkeyKongCountryDiscretizer, self).__init__(env, SNES_BUTTONS, actions)
+
+
 def discretize_actions(env, game):
     """Modifies a gym environment to discretize the set of possible actions
 
@@ -244,7 +259,8 @@ def discretize_actions(env, game):
         "Columns-Genesis": ColumnsGenesisDiscretizer,
         "ComixZone-Genesis": ComixZoneDiscretizer,
         "GradiusIII-Snes": GradiusDiscretizer,
-        "SuperMarioWorld-Snes": SuperMarioWorldDiscretizer
+        "SuperMarioWorld-Snes": SuperMarioWorldDiscretizer,
+        "DonkeyKongCountry-Snes": DonkeyKongCountryDiscretizer
     }
     if game in discretizers:
         return discretizers[game](env)
