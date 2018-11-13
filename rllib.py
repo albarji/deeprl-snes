@@ -4,7 +4,7 @@ import retro
 import argparse
 import ray
 from ray.rllib.agents import ppo, impala
-from ray.rllib.agents.agent import get_agent_class
+from ray.rllib.agents import agent as rllibagent
 from ray.tune import register_env
 from ray.tune.logger import pretty_print
 import envs
@@ -13,6 +13,7 @@ import skimage
 from skimage import color
 import numpy as np
 from functools import partial
+import rnd
 
 
 def make_env(game, state, rewardscaling=1, skipframes=4, pad_action=None, keepcolor=False):
@@ -59,6 +60,27 @@ ALGORITHMS = {
             ]
         }
     },
+    # Parameters from https://github.com/ray-project/ray/blob/master/python/ray/rllib/tuned_examples/atari-ppo.yaml
+    "PPORND": {
+        "default_conf": rnd.DEFAULT_CONFIG,
+        "conf": {
+            "lambda": 0.95,
+            "kl_coeff": 0.5,
+            "clip_param": 0.1,
+            "entropy_coeff": 0.01,
+            "sample_batch_size": 500,
+            "num_sgd_iter": 10,
+            "num_envs_per_worker": 1,
+            "batch_mode": "truncate_episodes",
+            "observation_filter": "NoFilter",
+            "vf_share_layers": True,
+            "num_gpus": 1,
+            "lr_schedule": [
+                [0, 0.0005],
+                [20000000, 0.000000000001],
+            ]
+        }
+    },
     # Parameters from https://github.com/ray-project/ray/blob/master/python/ray/rllib/tuned_examples/atari-impala.yaml
     "IMPALA": {
         "default_conf": impala.DEFAULT_CONFIG,
@@ -79,6 +101,14 @@ ALGORITHMS = {
         "conf": {}
     }
 }
+
+
+def get_agent_class(alg):
+    """Returns the class of a known agent given its name."""
+    if alg == "PPORND":
+        return rnd.PPORNDAgent
+    else:
+        return rllibagent.get_agent_class(alg)
 
 
 def create_config(alg="PPO", workers=4):
@@ -103,7 +133,7 @@ def train(checkpoint=None, alg="PPO", workers=4):
     print("Started policy network from scratch")
 
     for i in range(1000000):
-        # Perform one iteration of training the policy with PPO
+        # Perform one iteration of training the policy with the algorithm
         result = agent.train()
         print(pretty_print(result))
 
@@ -112,7 +142,8 @@ def train(checkpoint=None, alg="PPO", workers=4):
             print("checkpoint saved at", checkpoint)
 
 
-def test(checkpoint=None, testdelay=0, alg="PPO", render=False, makemovie=False, envcreator=None, keepcolor=False):
+def test(checkpoint=None, testdelay=0, alg="PPO", render=False, makemovie=False,
+         envcreator=None, keepcolor=False, maxepisodelen=10000000):
     """Tests and renders a previously trained model"""
     ray.init()
     config = create_config(alg, workers=1)
@@ -131,7 +162,8 @@ def test(checkpoint=None, testdelay=0, alg="PPO", render=False, makemovie=False,
         state = env.reset()
         done = False
         reward_total = 0.0
-        while not done:
+        step = 0
+        while not done and step < maxepisodelen:
             if alg == "random":
                 action = np.random.choice(range(env.action_space.n))
             else:
@@ -145,6 +177,7 @@ def test(checkpoint=None, testdelay=0, alg="PPO", render=False, makemovie=False,
                 rawframes.append(env.render(mode="rgb_array"))
                 states.append(next_state)
             state = next_state
+            step = step + 1
         if makemovie:
             envs.saveanimation(rawframes, f"{alg}_reward{reward_total}.mp4")
             processedframes = [
@@ -169,6 +202,7 @@ if __name__ == "__main__":
                         help='Introduced delay between test frames. Useful for debugging')
     parser.add_argument('--render', action='store_true', help='Render test episodes')
     parser.add_argument('--makemovie', action='store_true', help='Save videos of test episodes')
+    parser.add_argument('--maxepisodelen', type=int, default=1000000, help='Maximum length of test episodes')
     parser.add_argument('--algorithm', type=str, default="IMPALA",
                         help=f'Algorithm to use for training: {list(ALGORITHMS.keys())}')
     parser.add_argument('--workers', type=int, default=4, help='Number of workers to use during training')
@@ -179,6 +213,7 @@ if __name__ == "__main__":
                                 pad_action=args.padaction, keepcolor=args.keepcolor)
     if args.test:
         test(checkpoint=args.checkpoint, testdelay=args.testdelay, alg=args.algorithm, render=args.render,
-             makemovie=args.makemovie, envcreator=envcreator, keepcolor=args.keepcolor)
+             makemovie=args.makemovie, envcreator=envcreator, keepcolor=args.keepcolor,
+             maxepisodelen=args.maxepisodelen)
     else:
         train(checkpoint=args.checkpoint, alg=args.algorithm, workers=args.workers)
