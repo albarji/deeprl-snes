@@ -148,6 +148,7 @@ class RewardScaler(gym.RewardWrapper):
 
 GENESIS_BUTTONS = ["B", "A", "MODE", "START", "UP", "DOWN", "LEFT", "RIGHT", "C", "Y", "X", "Z"]
 SNES_BUTTONS = ["B", "Y", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT", "A", "X", "L", "R"]
+NES_BUTTONS = ["B", "UNK1", "UNK2", "UNK3", "UP", "DOWN", "LEFT", "RIGHT", "A"]
 
 
 class ButtonsRemapper(gym.ActionWrapper):
@@ -250,6 +251,18 @@ class DonkeyKongCountryDiscretizer(ButtonsRemapper):
         super(DonkeyKongCountryDiscretizer, self).__init__(env, SNES_BUTTONS, actions)
 
 
+class SpaceInvadersDiscretizer(ButtonsRemapper):
+    """Wrap a gym-retro environment and make it use discrete actions for the Donkey Kong Country game"""
+
+    def __init__(self, env):
+        actions = [
+            [],  # No-op
+            ['A'],  # Fire
+            ['LEFT'], ['RIGHT']  # Move around
+        ]
+        super(SpaceInvadersDiscretizer, self).__init__(env, NES_BUTTONS, actions)
+
+
 def discretize_actions(env, game):
     """Modifies a gym environment to discretize the set of possible actions
 
@@ -260,7 +273,8 @@ def discretize_actions(env, game):
         "ComixZone-Genesis": ComixZoneDiscretizer,
         "GradiusIII-Snes": GradiusDiscretizer,
         "SuperMarioWorld-Snes": SuperMarioWorldDiscretizer,
-        "DonkeyKongCountry-Snes": DonkeyKongCountryDiscretizer
+        "DonkeyKongCountry-Snes": DonkeyKongCountryDiscretizer,
+        "SpaceInvaders-Nes": SpaceInvadersDiscretizer
     }
     if game in discretizers:
         return discretizers[game](env)
