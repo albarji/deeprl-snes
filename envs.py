@@ -263,6 +263,21 @@ class SpaceInvadersDiscretizer(ButtonsRemapper):
         super(SpaceInvadersDiscretizer, self).__init__(env, NES_BUTTONS, actions)
 
 
+class GoldenAxeDiscretizer(ButtonsRemapper):
+    """Wrap a gym-retro environment and make it use discrete actions for the Donkey Kong Country game"""
+
+    def __init__(self, env):
+        actions = [
+            [],  # No-op
+            ['LEFT'], ['RIGHT'],  # Move around
+            ["A"],  # Use magic
+            ["B"],  # Attack
+            ["C"], ["C", "LEFT"], ["C", "RIGHT"],  # Jumps
+            ["B", "C"],  # Special attack
+        ]
+        super(GoldenAxeDiscretizer, self).__init__(env, GENESIS_BUTTONS, actions)
+
+
 def discretize_actions(env, game):
     """Modifies a gym environment to discretize the set of possible actions
 
@@ -274,7 +289,8 @@ def discretize_actions(env, game):
         "GradiusIII-Snes": GradiusDiscretizer,
         "SuperMarioWorld-Snes": SuperMarioWorldDiscretizer,
         "DonkeyKongCountry-Snes": DonkeyKongCountryDiscretizer,
-        "SpaceInvaders-Nes": SpaceInvadersDiscretizer
+        "SpaceInvaders-Nes": SpaceInvadersDiscretizer,
+        "GoldenAxe-Genesis": GoldenAxeDiscretizer
     }
     if game in discretizers:
         return discretizers[game](env)
