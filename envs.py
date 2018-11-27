@@ -3,6 +3,28 @@ import cv2
 from collections import deque
 import gym
 import moviepy.editor as mpy
+import yaml
+
+# Module configuration
+
+
+def load_actions_config(actionsfile):
+    """Loads an checks sanity of actions configurations"""
+    with open(actionsfile) as f:
+        config = yaml.load(f)
+    assert "gamepads" in config
+    assert "games" in config
+    for game in config["games"]:
+        assert "gamepad" in config["games"][game]
+        assert "actions" in config["games"][game]
+    return config
+
+
+ACTIONS_FILE = "games.yaml"
+ACTIONS_CONFIG = load_actions_config(ACTIONS_FILE)
+
+
+# Environment wrappers
 
 
 class SkipFrames(gym.Wrapper):
@@ -146,11 +168,6 @@ class RewardScaler(gym.RewardWrapper):
         return reward * self.rewardscaling
 
 
-GENESIS_BUTTONS = ["B", "A", "MODE", "START", "UP", "DOWN", "LEFT", "RIGHT", "C", "Y", "X", "Z"]
-SNES_BUTTONS = ["B", "Y", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT", "A", "X", "L", "R"]
-NES_BUTTONS = ["B", "UNK1", "UNK2", "UNK3", "UP", "DOWN", "LEFT", "RIGHT", "A"]
-
-
 class ButtonsRemapper(gym.ActionWrapper):
     """Wrap a gym-retro environment and make it use discrete actions according to a given button remap
 
@@ -158,8 +175,14 @@ class ButtonsRemapper(gym.ActionWrapper):
     gamepad, and a list of actions that will be considered in the game. Each action is a list of
     buttons being pushed simultaneously.
     """
-    def __init__(self, env, buttonmap, actions):
+    def __init__(self, env, game):
         super(ButtonsRemapper, self).__init__(env)
+        if game not in ACTIONS_CONFIG["games"]:
+            raise ValueError(f"ERROR: unknown game {game}, could not discretize actions. "
+                             f"Please add game configuration to {ACTIONS_FILE}")
+        gameconfig = ACTIONS_CONFIG["games"][game]
+        gamepad, actions = gameconfig["gamepad"], gameconfig["actions"]
+        buttonmap = ACTIONS_CONFIG["gamepads"][gamepad]
         self._actions = []
         for action in actions:
             arr = np.array([False] * len(buttonmap))
@@ -170,132 +193,6 @@ class ButtonsRemapper(gym.ActionWrapper):
 
     def action(self, a):
         return self._actions[a].copy()
-
-
-class GradiusDiscretizer(ButtonsRemapper):
-    """Wrap a gym-retro environment and make it use discrete actions for a SNES game.
-
-    This encodes the prior knowledge that combined actions like UP + RIGHT might be valuable,
-    but actions like A + B + RIGHT + L do not make sense (in general). It also helps making the
-    environment much simpler.
-    """
-    def __init__(self, env):
-        actions = [
-            [],  # No-op
-            ['DOWN'], ['LEFT'], ['RIGHT'], ['UP'],  # Basic directions
-            ['DOWN', 'RIGHT'], ['RIGHT', 'UP'], ['UP', 'LEFT'], ['LEFT', 'DOWN'],  # Diagonals
-            ['A'], ['B'], ['X'], ['Y'], ['L'], ['R'], ['SELECT'], ['START']  # Buttons
-        ]
-        super(GradiusDiscretizer, self).__init__(env, SNES_BUTTONS, actions)
-
-
-class ColumnsGenesisDiscretizer(ButtonsRemapper):
-    """Wrap a gym-retro environment and make it use discrete actions for the Columns Genesis game.
-
-    This encodes the prior knowledge that in Columns it only makes sense to use LEFT, RIGHT, DOWN
-    and column swap (A)
-    """
-    def __init__(self, env):
-        actions = [
-            [],  # No-op
-            ['LEFT'], ['RIGHT'],  # Move column around
-            # ['DOWN'],  # Speed up column fall to get additional points
-                         # It is better not to allow this action because the agent gets stuck
-                         # in the easy strategy of just dropping columns fast
-            ['A']  # Column jewels swap
-        ]
-        super(ColumnsGenesisDiscretizer, self).__init__(env, GENESIS_BUTTONS, actions)
-
-
-class ComixZoneDiscretizer(ButtonsRemapper):
-    """Wrap a gym-retro environment and make it use discrete actions for the Comix Zone game"""
-    def __init__(self, env):
-        actions = [
-            [],  # No-op
-            ['LEFT'], ['RIGHT'],  # Move around
-            ['B'], ['B', 'LEFT'], ['B', 'RIGHT'],  # Jump at different angles
-            ['DOWN'],  # Crouch
-            ['A'], ['A', 'DOWN'], ['A', 'LEFT'], ['A', 'RIGHT'], ['A', 'UP'],  # Attacks
-            ['X'], ['Y'], ['Z'],  # Use items
-        ]
-        super(ComixZoneDiscretizer, self).__init__(env, GENESIS_BUTTONS, actions)
-
-
-class SuperMarioWorldDiscretizer(ButtonsRemapper):
-    """Wrap a gym-retro environment and make it use discrete actions for the Super Mario World game"""
-    def __init__(self, env):
-        actions = [
-            [],  # No-op
-            ['LEFT'], ['RIGHT'],  # Move around
-            ['A'], ['A', 'LEFT'], ['A', 'RIGHT'],  # Spin jumps
-            ['B'], ['B', 'LEFT'], ['B', 'RIGHT'],  # Normal jumps
-            ['X'], ['X', 'LEFT'], ['X', 'RIGHT'],  # Run
-            ['DOWN'],  # Crouch
-            ['SELECT']  # Drops reserve item
-        ]
-        super(SuperMarioWorldDiscretizer, self).__init__(env, SNES_BUTTONS, actions)
-
-
-class DonkeyKongCountryDiscretizer(ButtonsRemapper):
-    """Wrap a gym-retro environment and make it use discrete actions for the Donkey Kong Country game"""
-    def __init__(self, env):
-        actions = [
-            [],  # No-op
-            ['A'],  # Switch monkeys
-            ['B'],  # Jump/swim
-            ['Y'],  # Pick/run
-            ['LEFT'], ['RIGHT'],  # Move around
-            ['Y'], ['Y', 'LEFT'], ['Y', 'RIGHT'],  # Run
-            ['DOWN']  # Crouch
-        ]
-        super(DonkeyKongCountryDiscretizer, self).__init__(env, SNES_BUTTONS, actions)
-
-
-class SpaceInvadersDiscretizer(ButtonsRemapper):
-    """Wrap a gym-retro environment and make it use discrete actions for the Donkey Kong Country game"""
-
-    def __init__(self, env):
-        actions = [
-            [],  # No-op
-            ['A'],  # Fire
-            ['LEFT'], ['RIGHT']  # Move around
-        ]
-        super(SpaceInvadersDiscretizer, self).__init__(env, NES_BUTTONS, actions)
-
-
-class GoldenAxeDiscretizer(ButtonsRemapper):
-    """Wrap a gym-retro environment and make it use discrete actions for the Donkey Kong Country game"""
-
-    def __init__(self, env):
-        actions = [
-            [],  # No-op
-            ['LEFT'], ['RIGHT'],  # Move around
-            ["A"],  # Use magic
-            ["B"],  # Attack
-            ["C"], ["C", "LEFT"], ["C", "RIGHT"],  # Jumps
-            ["B", "C"],  # Special attack
-        ]
-        super(GoldenAxeDiscretizer, self).__init__(env, GENESIS_BUTTONS, actions)
-
-
-def discretize_actions(env, game):
-    """Modifies a gym environment to discretize the set of possible actions
-
-    To do so we use prior knowledge on the actions that make sense in the game.
-    """
-    discretizers = {
-        "Columns-Genesis": ColumnsGenesisDiscretizer,
-        "ComixZone-Genesis": ComixZoneDiscretizer,
-        "GradiusIII-Snes": GradiusDiscretizer,
-        "SuperMarioWorld-Snes": SuperMarioWorldDiscretizer,
-        "DonkeyKongCountry-Snes": DonkeyKongCountryDiscretizer,
-        "SpaceInvaders-Nes": SpaceInvadersDiscretizer,
-        "GoldenAxe-Genesis": GoldenAxeDiscretizer
-    }
-    if game in discretizers:
-        return discretizers[game](env)
-    else:
-        raise ValueError(f"ERROR: unknown game {game}, could not discretize actions")
 
 
 def saveanimation(rawframes, filename):

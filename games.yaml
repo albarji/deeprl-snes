@@ -1,0 +1,74 @@
+# Configuration file for constraining each game to specific button actions
+
+gamepads:
+  genesis: ["B", "A", "MODE", "START", "UP", "DOWN", "LEFT", "RIGHT", "C", "Y", "X", "Z"]
+  nes: ["B", "UNK1", "UNK2", "UNK3", "UP", "DOWN", "LEFT", "RIGHT", "A"]
+  snes: ["B", "Y", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT", "A", "X", "L", "R"]
+
+games:
+  Columns-Genesis:
+    gamepad: "genesis"
+    actions: [
+      [],  # No-op
+      ['LEFT'], ['RIGHT'],  # Move column around
+      # ['DOWN'],  # Speed up column fall to get additional points
+                   # It is better not to allow this action because the agent gets stuck
+                   # in the easy strategy of just dropping columns fast
+      ['A']  # Column jewels swap
+    ]
+  ComixZone-Genesis:
+    gamepad: "genesis"
+    actions: [
+      [],  # No-op
+      ['LEFT'], ['RIGHT'],  # Move around
+      ['B'], ['B', 'LEFT'], ['B', 'RIGHT'],  # Jump at different angles
+      ['DOWN'],  # Crouch
+      ['A'], ['A', 'DOWN'], ['A', 'LEFT'], ['A', 'RIGHT'], ['A', 'UP'],  # Attacks
+      ['X'], ['Y'], ['Z'],  # Use items
+    ]
+  DonkeyKongCountry-Snes:
+    gamepad: "snes"
+    actions: [
+      [],  # No-op
+      ['A'],  # Switch monkeys
+      ['B'],  # Jump/swim
+      ['Y'],  # Pick/run
+      ['LEFT'], ['RIGHT'],  # Move around
+      ['Y'], ['Y', 'LEFT'], ['Y', 'RIGHT'],  # Run
+      ['DOWN']  # Crouch
+    ]
+  GoldenAxe-Genesis:
+    gamepad: "genesis"
+    actions: [
+      [],  # No-op
+      ['LEFT'], ['RIGHT'], ['UP'], ['DOWN'],  # Move around
+      ["A"],  # Use magic
+      ["B"],  # Attack
+      ["C"], ["C", "LEFT"], ["C", "RIGHT"],  # Jumps
+      ["B", "C"],  # Special attack
+    ]
+  GradiusIII-Snes:
+    gamepad: "snes"
+    actions: [
+      [],  # No-op
+      ['DOWN'], ['LEFT'], ['RIGHT'], ['UP'],  # Basic directions
+      ['DOWN', 'RIGHT'], ['RIGHT', 'UP'], ['UP', 'LEFT'], ['LEFT', 'DOWN'],  # Diagonals
+      ['A'], ['B'], ['X'], ['Y'], ['L'], ['R'], ['SELECT'], ['START']  # Buttons  #TODO: remove useless
+    ]
+  SpaceInvaders-Nes:
+    gamepad: "nes"
+    actions: [
+      [],  # No-op
+      ['A'],  # Fire
+      ['LEFT'], ['RIGHT']  # Move around
+    ]
+  SuperMarioWorld-Snes:
+    gamepad: "snes"
+    actions: [
+      [],  # No-op
+      ['LEFT'], ['RIGHT'],  # Move around
+      ["A"],  # Use magic
+      ["B"],  # Attack
+      ["C"], ["C", "LEFT"], ["C", "RIGHT"],  # Jumps
+      ["B", "C"],  # Special attack
+    ]

@@ -20,7 +20,7 @@ def make_env(game, state, rewardscaling=1, skipframes=4, pad_action=None, keepco
     """Creates the SNES environment"""
     env = retro.make(game=game, state=state)
     env = envs.RewardScaler(env, rewardscaling)
-    env = envs.discretize_actions(env, game)
+    env = envs.ButtonsRemapper(env, game)
     env = envs.SkipFrames(env, skip=skipframes, pad_action=pad_action)
     env = envs.WarpFrame(env, togray=not keepcolor)
     env = envs.FrameStack(env)
