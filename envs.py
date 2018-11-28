@@ -168,6 +168,20 @@ class RewardScaler(gym.RewardWrapper):
         return reward * self.rewardscaling
 
 
+class RewardTimeDump(gym.RewardWrapper):
+    """Adds a small negative reward per step.
+
+    This kind of penalty can be useful to enforce finding fast solutions. But it should not
+    be large enough to make the agent converge to dying fast.
+    """
+    def __init__(self, env, penalty=1e-3):
+        self.penalty = penalty
+        gym.RewardWrapper.__init__(self, env)
+
+    def reward(self, reward):
+        return reward - self.penalty
+
+
 class ButtonsRemapper(gym.ActionWrapper):
     """Wrap a gym-retro environment and make it use discrete actions according to a given button remap
 

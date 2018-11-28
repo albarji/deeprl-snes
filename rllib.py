@@ -16,7 +16,8 @@ from functools import partial
 import rnd
 
 
-def make_env(game, state, rewardscaling=1, skipframes=4, pad_action=None, keepcolor=False):
+def make_env(game, state, rewardscaling=1, skipframes=4, pad_action=None, keepcolor=False,
+             timepenalty=0):
     """Creates the SNES environment"""
     env = retro.make(game=game, state=state)
     env = envs.RewardScaler(env, rewardscaling)
@@ -24,6 +25,7 @@ def make_env(game, state, rewardscaling=1, skipframes=4, pad_action=None, keepco
     env = envs.SkipFrames(env, skip=skipframes, pad_action=pad_action)
     env = envs.WarpFrame(env, togray=not keepcolor)
     env = envs.FrameStack(env)
+    env = envs.RewardTimeDump(env, timepenalty)
     return env
 
 
@@ -206,11 +208,13 @@ if __name__ == "__main__":
     parser.add_argument('--algorithm', type=str, default="IMPALA",
                         help=f'Algorithm to use for training: {list(ALGORITHMS.keys())}')
     parser.add_argument('--workers', type=int, default=4, help='Number of workers to use during training')
+    parser.add_argument('--timepenalty', type=float, default=0, help='Reward penalty to apply to each timestep')
 
     args = parser.parse_args()
 
     envcreator = register_retro(args.game, args.state, skipframes=args.skipframes,
-                                pad_action=args.padaction, keepcolor=args.keepcolor)
+                                pad_action=args.padaction, keepcolor=args.keepcolor,
+                                timepenalty=args.timepenalty)
     if args.test:
         test(checkpoint=args.checkpoint, testdelay=args.testdelay, alg=args.algorithm, render=args.render,
              makemovie=args.makemovie, envcreator=envcreator, keepcolor=args.keepcolor,
