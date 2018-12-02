@@ -4,6 +4,9 @@ from collections import deque
 import gym
 import moviepy.editor as mpy
 import yaml
+from skimage import color
+import string
+import random
 
 # Module configuration
 
@@ -207,6 +210,77 @@ class ButtonsRemapper(gym.ActionWrapper):
 
     def action(self, a):
         return self._actions[a].copy()
+
+
+class MovieRecorder(gym.ObservationWrapper):
+    """Gym wrapper that records gameplay into video files."""
+    MODES = {"all", "best"}
+
+    def __init__(self, env, fileprefix, mode="all"):
+        """Creates a movie recorder wrapper
+
+            env: environment to wrap
+            fileprefix: prefix for created movie files, to be followed by reward obtained
+            mode: "all" to save a movie for every episode
+                  "best" to save only when a better result is obtained
+        """
+        gym.Wrapper.__init__(self, env)
+        assert mode in self.MODES
+        self.mode = mode
+        self.fileprefix = fileprefix
+        self.best_reward = -np.infty
+        self.frames = []
+        self.episode_reward = 0
+
+    def observation(self, frame):
+        self.frames.append(frame)
+        return frame
+
+    def step(self, action):
+        observation, reward, done, info = self.env.step(action)
+        self.episode_reward += reward
+        return self.observation(observation), reward, done, info
+
+    def reset(self):
+        if len(self.frames) > 0:
+            if self.mode == "all" or (self.mode == "best" and self.episode_reward > self.best_reward):
+                clip = mpy.ImageSequenceClip(self.frames, fps=60)
+                filename = f"{self.fileprefix}_reward{self.episode_reward}_{id_generator()}.mp4"
+                clip.write_videofile(filename)
+            if self.best_reward < self.episode_reward:
+                self.best_reward = self.episode_reward
+            del self.frames
+            self.frames = []
+        self.episode_reward = 0
+        return self.env.reset()
+
+
+class ProcessedMovieRecorder(MovieRecorder):
+    """Specialized movie recorder for processed frames"""
+    def __init__(self, env, fileprefix, mode="all", keepcolor=False):
+        """Creates a processed frames movie recorder wrapper
+
+            env: environment to wrap
+            fileprefix: prefix for created movie files, to be followed by reward obtained
+            mode: "all" to save a movie for every episode
+                  "best" to save only when a better result is obtained
+            keepcolor: whether the processed frames kept original colors or not
+                       (turned to grayscale)
+        """
+        self.keepcolor = keepcolor
+        MovieRecorder.__init__(self, env, fileprefix, mode)
+
+    def reset(self):
+        if not self.keepcolor:
+            self.frames = [color.gray2rgb(f) for f in self.frames]
+        return super(ProcessedMovieRecorder, self).reset()
+
+
+# General functions
+
+def id_generator(size=6, chars=string.ascii_uppercase + string.digits):
+    """Generates a random id for a filename"""
+    return ''.join(random.choice(chars) for _ in range(size))
 
 
 def saveanimation(rawframes, filename):

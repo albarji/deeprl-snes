@@ -9,21 +9,23 @@ from ray.tune import register_env
 from ray.tune.logger import pretty_print
 import envs
 import time
-import skimage
-from skimage import color
 import numpy as np
 from functools import partial
 import rnd
 
 
 def make_env(game, state, rewardscaling=1, skipframes=4, pad_action=None, keepcolor=False,
-             timepenalty=0):
+             timepenalty=0, makemovie=None, makeprocessedmovie=None):
     """Creates the SNES environment"""
     env = retro.make(game=game, state=state)
     env = envs.RewardScaler(env, rewardscaling)
     env = envs.ButtonsRemapper(env, game)
+    if makemovie is not None:
+        env = envs.MovieRecorder(env, fileprefix="raw", mode=makemovie)
     env = envs.SkipFrames(env, skip=skipframes, pad_action=pad_action)
     env = envs.WarpFrame(env, togray=not keepcolor)
+    if makeprocessedmovie is not None:
+        env = envs.ProcessedMovieRecorder(env, fileprefix="processed", mode=makeprocessedmovie)
     env = envs.FrameStack(env)
     env = envs.RewardTimeDump(env, timepenalty)
     return env
@@ -94,7 +96,8 @@ ALGORITHMS = {
                 [0, 0.0005],
                 [200000000, 0.000000000001],
             ],
-            'sample_async': True
+            'sample_async': True,
+            #"entropy_coeff": -0.00001,
         }
     },
     # Random agent for testing purposes
@@ -144,8 +147,8 @@ def train(checkpoint=None, alg="PPO", workers=4):
             print("checkpoint saved at", checkpoint)
 
 
-def test(checkpoint=None, testdelay=0, alg="PPO", render=False, makemovie=False,
-         envcreator=None, keepcolor=False, maxepisodelen=10000000):
+def test(checkpoint=None, testdelay=0, alg="PPO", render=False, envcreator=None,
+         maxepisodelen=10000000):
     """Tests and renders a previously trained model"""
     ray.init()
     config = create_config(alg, workers=1)
@@ -159,8 +162,6 @@ def test(checkpoint=None, testdelay=0, alg="PPO", render=False, makemovie=False,
         env = agent.local_evaluator.env
 
     while True:
-        rawframes = []
-        states = []
         state = env.reset()
         done = False
         reward_total = 0.0
@@ -175,19 +176,8 @@ def test(checkpoint=None, testdelay=0, alg="PPO", render=False, makemovie=False,
             reward_total += reward
             if render:
                 env.render()
-            if makemovie:
-                rawframes.append(env.render(mode="rgb_array"))
-                states.append(next_state)
             state = next_state
             step = step + 1
-        if makemovie:
-            envs.saveanimation(rawframes, f"{alg}_reward{reward_total}.mp4")
-            processedframes = [
-                st[:, :, -3:] if keepcolor else color.gray2rgb(st[:, :, -1])
-                for st in states
-            ]
-            envs.saveanimation([skimage.img_as_ubyte(f) for f in processedframes],
-                               f"{alg}_reward{reward_total}_processed.mp4")
         print("Episode reward", reward_total)
 
 
@@ -203,7 +193,13 @@ if __name__ == "__main__":
     parser.add_argument('--testdelay', type=float, default=0,
                         help='Introduced delay between test frames. Useful for debugging')
     parser.add_argument('--render', action='store_true', help='Render test episodes')
-    parser.add_argument('--makemovie', action='store_true', help='Save videos of test episodes')
+    parser.add_argument('--makemovie', type=str, default=None,
+                        help='Save videos of test episodes. '
+                             'Valid modes: "all" to record all episodes, '
+                             '"best" to record best episodes')
+    parser.add_argument('--makeprocessedmovie', type=str, default=None,
+                        help='Save videos of test episodes in form of processed frames. '
+                             'Modes similar to those of --makemovie')
     parser.add_argument('--maxepisodelen', type=int, default=1000000, help='Maximum length of test episodes')
     parser.add_argument('--algorithm', type=str, default="IMPALA",
                         help=f'Algorithm to use for training: {list(ALGORITHMS.keys())}')
@@ -214,10 +210,10 @@ if __name__ == "__main__":
 
     envcreator = register_retro(args.game, args.state, skipframes=args.skipframes,
                                 pad_action=args.padaction, keepcolor=args.keepcolor,
-                                timepenalty=args.timepenalty)
+                                timepenalty=args.timepenalty, makemovie=args.makemovie,
+                                makeprocessedmovie=args.makeprocessedmovie)
     if args.test:
-        test(checkpoint=args.checkpoint, testdelay=args.testdelay, alg=args.algorithm, render=args.render,
-             makemovie=args.makemovie, envcreator=envcreator, keepcolor=args.keepcolor,
-             maxepisodelen=args.maxepisodelen)
+        test(checkpoint=args.checkpoint, testdelay=args.testdelay, alg=args.algorithm,
+             render=args.render, envcreator=envcreator, maxepisodelen=args.maxepisodelen)
     else:
         train(checkpoint=args.checkpoint, alg=args.algorithm, workers=args.workers)
