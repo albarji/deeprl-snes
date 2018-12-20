@@ -3,7 +3,7 @@
 import retro
 import argparse
 import ray
-from ray.rllib.agents import ppo, impala
+from ray.rllib.agents import ppo, impala, dqn
 from ray.rllib.agents import agent as rllibagent
 from ray.tune import register_env
 from ray.tune.logger import pretty_print
@@ -20,9 +20,9 @@ def make_env(game, state, rewardscaling=1, skipframes=4, pad_action=None, keepco
     env = retro.make(game=game, state=state)
     env = envs.RewardScaler(env, rewardscaling)
     env = envs.ButtonsRemapper(env, game)
+    env = envs.SkipFrames(env, skip=skipframes, pad_action=pad_action)
     if makemovie is not None:
         env = envs.MovieRecorder(env, fileprefix="raw", mode=makemovie)
-    env = envs.SkipFrames(env, skip=skipframes, pad_action=pad_action)
     env = envs.WarpFrame(env, togray=not keepcolor)
     if makeprocessedmovie is not None:
         env = envs.ProcessedMovieRecorder(env, fileprefix="processed", mode=makeprocessedmovie)
@@ -43,6 +43,24 @@ def register_retro(game, state, **kwargs):
 
 """Algorithm configuration parameters."""
 ALGORITHMS = {
+    # Parameters from https://github.com/ray-project/ray/blob/master/python/ray/rllib/tuned_examples/pong-rainbow.yaml
+    "DQN": {  # DQN Rainbow
+        "default_conf": dqn.DEFAULT_CONFIG,
+        "conf": {
+            "num_atoms": 51,
+            "noisy": True,
+            "lr": 1e-4,
+            "learning_starts": 10000,
+            "exploration_fraction": 0.1,
+            "exploration_final_eps": 0,
+            "schedule_max_timesteps": 2000000,
+            "prioritized_replay_alpha": 0.5,
+            "beta_annealing_fraction": 0.2,
+            "final_prioritized_replay_beta": 1.0,
+            "n_step": 3,
+            "gpu": True
+        }
+    },
     # Parameters from https://github.com/ray-project/ray/blob/master/python/ray/rllib/tuned_examples/atari-ppo.yaml
     "PPO": {
         "default_conf": ppo.DEFAULT_CONFIG,
@@ -123,10 +141,12 @@ def create_config(alg="PPO", workers=4):
     return {**ALGORITHMS[alg]["default_conf"], **ALGORITHMS[alg]["conf"], **{"num_workers": workers}}
 
 
-def train(checkpoint=None, alg="PPO", workers=4):
+def train(checkpoint=None, alg="IMPALA", workers=4, entropycoeff=None):
     """Trains a policy network"""
     ray.init()
     config = create_config(alg, workers)
+    if entropycoeff is not None:
+        config["entropy_coeff"] = np.sign(config["entropy_coeff"]) * entropycoeff  # Each alg uses different sign
     print(f"Config for {alg}:", config)
     agent = get_agent_class(alg)(config=config, env="retro-v0")
     if checkpoint is not None:
@@ -147,7 +167,7 @@ def train(checkpoint=None, alg="PPO", workers=4):
             print("checkpoint saved at", checkpoint)
 
 
-def test(checkpoint=None, testdelay=0, alg="PPO", render=False, envcreator=None,
+def test(checkpoint=None, testdelay=0, alg="IMPALA", render=False, envcreator=None,
          maxepisodelen=10000000):
     """Tests and renders a previously trained model"""
     ray.init()
@@ -205,6 +225,7 @@ if __name__ == "__main__":
                         help=f'Algorithm to use for training: {list(ALGORITHMS.keys())}')
     parser.add_argument('--workers', type=int, default=4, help='Number of workers to use during training')
     parser.add_argument('--timepenalty', type=float, default=0, help='Reward penalty to apply to each timestep')
+    parser.add_argument('--entropycoeff', type=float, default=None, help='Entropy bonus to apply to diverse actions')
 
     args = parser.parse_args()
 
@@ -216,4 +237,4 @@ if __name__ == "__main__":
         test(checkpoint=args.checkpoint, testdelay=args.testdelay, alg=args.algorithm,
              render=args.render, envcreator=envcreator, maxepisodelen=args.maxepisodelen)
     else:
-        train(checkpoint=args.checkpoint, alg=args.algorithm, workers=args.workers)
+        train(checkpoint=args.checkpoint, alg=args.algorithm, workers=args.workers, entropycoeff=args.entropycoeff)

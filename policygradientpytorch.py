@@ -7,7 +7,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Categorical
-import moviepy.editor as mpy
 import argparse
 import skimage
 from skimage import color
