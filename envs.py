@@ -171,6 +171,15 @@ class RewardScaler(gym.RewardWrapper):
         return reward * self.rewardscaling
 
 
+class RewardClipper(gym.RewardWrapper):
+    """Clips the rewards to {-1, 0, 1}
+
+    Can be useful to prevent the agent getting crazy about very large rewards.
+    """
+    def reward(self, reward):
+        return np.sign(reward)
+
+
 class RewardTimeDump(gym.RewardWrapper):
     """Adds a small negative reward per step.
 

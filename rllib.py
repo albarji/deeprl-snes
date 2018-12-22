@@ -15,10 +15,12 @@ import rnd
 
 
 def make_env(game, state, rewardscaling=1, skipframes=4, pad_action=None, keepcolor=False,
-             timepenalty=0, makemovie=None, makeprocessedmovie=None):
+             timepenalty=0, makemovie=None, makeprocessedmovie=None, cliprewards=False):
     """Creates the SNES environment"""
     env = retro.make(game=game, state=state)
     env = envs.RewardScaler(env, rewardscaling)
+    if cliprewards:
+        env = envs.RewardClipper(env)
     env = envs.ButtonsRemapper(env, game)
     env = envs.SkipFrames(env, skip=skipframes, pad_action=pad_action)
     if makemovie is not None:
@@ -226,13 +228,14 @@ if __name__ == "__main__":
     parser.add_argument('--workers', type=int, default=4, help='Number of workers to use during training')
     parser.add_argument('--timepenalty', type=float, default=0, help='Reward penalty to apply to each timestep')
     parser.add_argument('--entropycoeff', type=float, default=None, help='Entropy bonus to apply to diverse actions')
+    parser.add_argument('--cliprewards', action="store_true", help='Clip rewards to {-1, 0, +1}')
 
     args = parser.parse_args()
 
     envcreator = register_retro(args.game, args.state, skipframes=args.skipframes,
                                 pad_action=args.padaction, keepcolor=args.keepcolor,
                                 timepenalty=args.timepenalty, makemovie=args.makemovie,
-                                makeprocessedmovie=args.makeprocessedmovie)
+                                makeprocessedmovie=args.makeprocessedmovie, cliprewards=args.cliprewards)
     if args.test:
         test(checkpoint=args.checkpoint, testdelay=args.testdelay, alg=args.algorithm,
              render=args.render, envcreator=envcreator, maxepisodelen=args.maxepisodelen)
