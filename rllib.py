@@ -148,8 +148,7 @@ def create_config(alg="PPO", workers=4, model=None):
     config = {**ALGORITHMS[alg]["default_conf"], **ALGORITHMS[alg]["conf"], **{"num_workers": workers}}
     if model is not None:
         config['model'] = {
-            "custom_model": model,
-            "custom_options": {"image_shape": [84, 84, 4]},
+            "custom_model": model
         }
     return config
 

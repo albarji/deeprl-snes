@@ -2,7 +2,7 @@
 
 from keras.layers.convolutional import Convolution2D, MaxPooling2D
 from keras.layers.core import Flatten, Dense
-from keras.layers import Input, LSTM, merge, Activation
+from keras.layers import Input, merge, Activation
 
 from ray.rllib.models.catalog import ModelCatalog
 from ray.rllib.models.model import Model
@@ -42,7 +42,7 @@ class ResNet(Model):
 
         kernel_size = 3  # Size of the kernel for the convolution layers
         pool_size = 3  # Size of the pooling region for the pooling layers
-        image_shape = options["custom_options"]["image_shape"]
+        image_shape = input_dict["obs"].get_shape().as_list()[1:]
 
         embed_input = Input(shape=image_shape, tensor=input_dict["obs"])
         layer1 = convolutional_block(16, embed_input, kernel_size, pool_size)
