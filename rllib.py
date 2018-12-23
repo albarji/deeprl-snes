@@ -1,4 +1,4 @@
-# Agent that learns how to play a SNES game by using RLLib algorithms
+"""Agent that learns how to play a SNES game by using RLLib algorithms"""
 
 import retro
 import argparse
@@ -8,10 +8,12 @@ from ray.rllib.agents import agent as rllibagent
 from ray.tune import register_env
 from ray.tune.logger import pretty_print
 import envs
+import models
 import time
 import numpy as np
 from functools import partial
 import rnd
+import json
 
 
 def make_env(game, state, rewardscaling=1, skipframes=4, pad_action=None, keepcolor=False,
@@ -106,18 +108,21 @@ ALGORITHMS = {
         }
     },
     # Parameters from https://github.com/ray-project/ray/blob/master/python/ray/rllib/tuned_examples/atari-impala.yaml
+    #  and IMPALA paper https://arxiv.org/abs/1802.01561 Appendix G
     "IMPALA": {
         "default_conf": impala.DEFAULT_CONFIG,
         "conf": {
-            'sample_batch_size': 50,
-            'train_batch_size': 500,
+            'sample_batch_size': 20,  # Unroll length
+            'train_batch_size': 32,
             'num_envs_per_worker': 1,
             'lr_schedule': [
                 [0, 0.0005],
                 [200000000, 0.000000000001],
             ],
-            'sample_async': True,
-            #"entropy_coeff": -0.00001,
+            "grad_clip": 40.0,
+            "opt_type": "rmsprop",
+            "momentum": 0.0,
+            "epsilon": 0.01,
         }
     },
     # Random agent for testing purposes
@@ -136,20 +141,26 @@ def get_agent_class(alg):
         return rllibagent.get_agent_class(alg)
 
 
-def create_config(alg="PPO", workers=4):
+def create_config(alg="PPO", workers=4, model=None):
     """Returns a learning algorithm configuration"""
     if alg not in ALGORITHMS:
         raise ValueError(f"Unknown algorithm {alg}, must be one of {list(ALGORITHMS.keys())}")
-    return {**ALGORITHMS[alg]["default_conf"], **ALGORITHMS[alg]["conf"], **{"num_workers": workers}}
+    config = {**ALGORITHMS[alg]["default_conf"], **ALGORITHMS[alg]["conf"], **{"num_workers": workers}}
+    if model is not None:
+        config['model'] = {
+            "custom_model": model,
+            "custom_options": {"image_shape": [84, 84, 4]},
+        }
+    return config
 
 
-def train(checkpoint=None, alg="IMPALA", workers=4, entropycoeff=None):
+def train(checkpoint=None, alg="IMPALA", workers=4, entropycoeff=None, model=None):
     """Trains a policy network"""
     ray.init()
-    config = create_config(alg, workers)
+    config = create_config(alg, workers, model)
     if entropycoeff is not None:
         config["entropy_coeff"] = np.sign(config["entropy_coeff"]) * entropycoeff  # Each alg uses different sign
-    print(f"Config for {alg}:", config)
+    print(f"Config for {alg}: {json.dumps(config, indent=4, sort_keys=True)}")
     agent = get_agent_class(alg)(config=config, env="retro-v0")
     if checkpoint is not None:
         try:
@@ -170,10 +181,10 @@ def train(checkpoint=None, alg="IMPALA", workers=4, entropycoeff=None):
 
 
 def test(checkpoint=None, testdelay=0, alg="IMPALA", render=False, envcreator=None,
-         maxepisodelen=10000000):
+         maxepisodelen=10000000, model=None):
     """Tests and renders a previously trained model"""
     ray.init()
-    config = create_config(alg, workers=1)
+    config = create_config(alg, workers=1, model=model)
     if alg == "random":
         env = envcreator()
     else:
@@ -225,6 +236,8 @@ if __name__ == "__main__":
     parser.add_argument('--maxepisodelen', type=int, default=1000000, help='Maximum length of test episodes')
     parser.add_argument('--algorithm', type=str, default="IMPALA",
                         help=f'Algorithm to use for training: {list(ALGORITHMS.keys())}')
+    parser.add_argument('--model', type=str, default=None,
+                        help=f'Deep network model to use for training: {[None] + list(models.MODELS.keys())}')
     parser.add_argument('--workers', type=int, default=4, help='Number of workers to use during training')
     parser.add_argument('--timepenalty', type=float, default=0, help='Reward penalty to apply to each timestep')
     parser.add_argument('--entropycoeff', type=float, default=None, help='Entropy bonus to apply to diverse actions')
@@ -238,6 +251,7 @@ if __name__ == "__main__":
                                 makeprocessedmovie=args.makeprocessedmovie, cliprewards=args.cliprewards)
     if args.test:
         test(checkpoint=args.checkpoint, testdelay=args.testdelay, alg=args.algorithm,
-             render=args.render, envcreator=envcreator, maxepisodelen=args.maxepisodelen)
+             render=args.render, envcreator=envcreator, maxepisodelen=args.maxepisodelen, model=args.model)
     else:
-        train(checkpoint=args.checkpoint, alg=args.algorithm, workers=args.workers, entropycoeff=args.entropycoeff)
+        train(checkpoint=args.checkpoint, alg=args.algorithm, workers=args.workers, entropycoeff=args.entropycoeff,
+              model=args.model)

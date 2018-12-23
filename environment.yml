@@ -8,12 +8,11 @@ dependencies:
   - cython
   - scikit-image=0.14.0
   - opencv=3.4.2
-  #- jupyter=1.0.0
-  #- nb_conda=2.2.1
   - cudatoolkit=9.0
   - cudnn=7.1.2
+  - keras-gpu=2.2.2
   - pip:
-    - moviepy
+    - moviepy==0.2.3.5
     - gym-retro==0.6.0
-    - ray==0.5.3
+    - ray[debug]==0.6.0
     - lz4==2.1.0
