@@ -17,7 +17,7 @@ import json
 
 
 def make_env(game, state, rewardscaling=1, skipframes=4, pad_action=None, keepcolor=False,
-             timepenalty=0, makemovie=None, makeprocessedmovie=None, cliprewards=False):
+             stackframes=4, timepenalty=0, makemovie=None, makeprocessedmovie=None, cliprewards=False):
     """Creates the SNES environment"""
     env = retro.make(game=game, state=state)
     env = envs.RewardScaler(env, rewardscaling)
@@ -30,7 +30,7 @@ def make_env(game, state, rewardscaling=1, skipframes=4, pad_action=None, keepco
     env = envs.WarpFrame(env, togray=not keepcolor)
     if makeprocessedmovie is not None:
         env = envs.ProcessedMovieRecorder(env, fileprefix="processed", mode=makeprocessedmovie)
-    env = envs.FrameStack(env)
+    env = envs.FrameStack(env, stackframes)
     env = envs.RewardTimeDump(env, timepenalty)
     return env
 
@@ -221,9 +221,10 @@ if __name__ == "__main__":
     parser.add_argument('state', type=str, help='State (level) of the game to play')
     parser.add_argument('--checkpoint', type=str, help='Checkpoint file from which to load learning progress')
     parser.add_argument('--test', action='store_true', help='Run in test mode (no policy updates, render environment)')
-    parser.add_argument('--skipframes', type=int, default=4, help='Run the environment in groups of N frames')
+    parser.add_argument('--skipframes', type=int, default=4, help='Run the environment skipping N-1 out of N frames')
     parser.add_argument('--padaction', type=int, default=None, help='Index of action used to pad skipped frames')
     parser.add_argument('--keepcolor', action='store_true', help='Keep colors in image processing')
+    parser.add_argument('--stackframes', type=int, default=4, help='Give the model a stack of the latest N frames')
     parser.add_argument('--testdelay', type=float, default=0,
                         help='Introduced delay between test frames. Useful for debugging')
     parser.add_argument('--render', action='store_true', help='Render test episodes')
@@ -248,6 +249,7 @@ if __name__ == "__main__":
 
     envcreator = register_retro(args.game, args.state, skipframes=args.skipframes,
                                 pad_action=args.padaction, keepcolor=args.keepcolor,
+                                stackframes=args.stackframes,
                                 timepenalty=args.timepenalty, makemovie=args.makemovie,
                                 makeprocessedmovie=args.makeprocessedmovie, cliprewards=args.cliprewards)
     if args.test:
