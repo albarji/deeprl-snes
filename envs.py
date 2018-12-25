@@ -266,22 +266,9 @@ class MovieRecorder(gym.ObservationWrapper):
 
 class ProcessedMovieRecorder(MovieRecorder):
     """Specialized movie recorder for processed frames"""
-    def __init__(self, env, fileprefix, mode="all", keepcolor=False):
-        """Creates a processed frames movie recorder wrapper
-
-            env: environment to wrap
-            fileprefix: prefix for created movie files, to be followed by reward obtained
-            mode: "all" to save a movie for every episode
-                  "best" to save only when a better result is obtained
-            keepcolor: whether the processed frames kept original colors or not
-                       (turned to grayscale)
-        """
-        self.keepcolor = keepcolor
-        MovieRecorder.__init__(self, env, fileprefix, mode)
-
     def reset(self):
-        if not self.keepcolor:
-            self.frames = [color.gray2rgb(f) for f in self.frames]
+        # Color correction in case the processed frames were turned to grayscale values
+        self.frames = [color.gray2rgb(f) for f in self.frames]
         return super(ProcessedMovieRecorder, self).reset()
 
 

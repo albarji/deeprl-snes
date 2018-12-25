@@ -87,6 +87,7 @@ ALGORITHMS = {
         }
     },
     # Parameters from https://github.com/ray-project/ray/blob/master/python/ray/rllib/tuned_examples/atari-ppo.yaml
+    # TODO: testing
     "PPORND": {
         "default_conf": rnd.DEFAULT_CONFIG,
         "conf": {
@@ -136,6 +137,7 @@ ALGORITHMS = {
 def get_agent_class(alg):
     """Returns the class of a known agent given its name."""
     if alg == "PPORND":
+        # TODO: testing
         return rnd.PPORNDAgent
     else:
         return rllibagent.get_agent_class(alg)
