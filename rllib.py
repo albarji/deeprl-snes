@@ -123,7 +123,7 @@ ALGORITHMS = {
             "grad_clip": 40.0,
             "opt_type": "rmsprop",
             "momentum": 0.0,
-            "epsilon": 0.01,
+            "epsilon": 0.01
         }
     },
     # Random agent for testing purposes
@@ -143,25 +143,31 @@ def get_agent_class(alg):
         return rllibagent.get_agent_class(alg)
 
 
-def create_config(alg="PPO", workers=4, model=None):
+def create_config(alg="PPO", workers=4, entropycoeff=None, lstm=None, model=None):
     """Returns a learning algorithm configuration"""
     if alg not in ALGORITHMS:
         raise ValueError(f"Unknown algorithm {alg}, must be one of {list(ALGORITHMS.keys())}")
     config = {**ALGORITHMS[alg]["default_conf"], **ALGORITHMS[alg]["conf"], **{"num_workers": workers}}
+    if entropycoeff is not None:
+        config["entropy_coeff"] = np.sign(config["entropy_coeff"]) * entropycoeff  # Each alg uses different sign
     if model is not None:
         config['model'] = {
             "custom_model": model
         }
+    if lstm is not None:
+        config['model'] = {
+            **config['model'],
+            "use_lstm": True,
+            "max_seq_len": lstm,
+            "lstm_cell_size": 256,
+            "lstm_use_prev_action_reward": True
+        }
     return config
 
 
-def train(checkpoint=None, alg="IMPALA", workers=4, entropycoeff=None, model=None):
+def train(config, alg, checkpoint=None):
     """Trains a policy network"""
     ray.init()
-    config = create_config(alg, workers, model)
-    if entropycoeff is not None:
-        config["entropy_coeff"] = np.sign(config["entropy_coeff"]) * entropycoeff  # Each alg uses different sign
-    print(f"Config for {alg}: {json.dumps(config, indent=4, sort_keys=True)}")
     agent = get_agent_class(alg)(config=config, env="retro-v0")
     if checkpoint is not None:
         try:
@@ -181,11 +187,9 @@ def train(checkpoint=None, alg="IMPALA", workers=4, entropycoeff=None, model=Non
             print("checkpoint saved at", checkpoint)
 
 
-def test(checkpoint=None, testdelay=0, alg="IMPALA", render=False, envcreator=None,
-         maxepisodelen=10000000, model=None):
+def test(config, alg, checkpoint=None, testdelay=0, render=False, envcreator=None, maxepisodelen=10000000):
     """Tests and renders a previously trained model"""
     ray.init()
-    config = create_config(alg, workers=1, model=model)
     if alg == "random":
         env = envcreator()
     else:
@@ -240,6 +244,8 @@ if __name__ == "__main__":
                         help=f'Algorithm to use for training: {list(ALGORITHMS.keys())}')
     parser.add_argument('--model', type=str, default=None,
                         help=f'Deep network model to use for training: {[None] + list(models.MODELS.keys())}')
+    parser.add_argument('--lstm', type=int, default=None,
+                        help=f'Length of sequences to feed into the LSTM layer (default: no LSTM layer)')
     parser.add_argument('--workers', type=int, default=4, help='Number of workers to use during training')
     parser.add_argument('--timepenalty', type=float, default=0, help='Reward penalty to apply to each timestep')
     parser.add_argument('--entropycoeff', type=float, default=None, help='Entropy bonus to apply to diverse actions')
@@ -252,9 +258,13 @@ if __name__ == "__main__":
                                 stackframes=args.stackframes,
                                 timepenalty=args.timepenalty, makemovie=args.makemovie,
                                 makeprocessedmovie=args.makeprocessedmovie, cliprewards=args.cliprewards)
+
+    config = create_config(args.algorithm, workers=args.workers, entropycoeff=args.entropycoeff, model=args.model,
+                           lstm=args.lstm)
+    print(f"Config: {json.dumps(config, indent=4, sort_keys=True)}")
+
     if args.test:
-        test(checkpoint=args.checkpoint, testdelay=args.testdelay, alg=args.algorithm,
-             render=args.render, envcreator=envcreator, maxepisodelen=args.maxepisodelen, model=args.model)
+        test(config, args.algorithm, checkpoint=args.checkpoint, testdelay=args.testdelay,
+             render=args.render, envcreator=envcreator, maxepisodelen=args.maxepisodelen)
     else:
-        train(checkpoint=args.checkpoint, alg=args.algorithm, workers=args.workers, entropycoeff=args.entropycoeff,
-              model=args.model)
+        train(config, args.algorithm, checkpoint=args.checkpoint)
