@@ -175,7 +175,8 @@ def train(config, alg, checkpoint=None):
             print(f"Resumed checkpoint {checkpoint}")
         except:
             print("Checkpoint not found: restarted policy network from scratch")
-    print("Started policy network from scratch")
+    else:
+        print("Started policy network from scratch")
 
     for i in range(1000000):
         # Perform one iteration of training the policy with the algorithm
