@@ -67,8 +67,9 @@ games:
     actions: [
       [],  # No-op
       ['LEFT'], ['RIGHT'],  # Move around
-      ["A"],  # Use magic
-      ["B"],  # Attack
-      ["C"], ["C", "LEFT"], ["C", "RIGHT"],  # Jumps
-      ["B", "C"],  # Special attack
+      ['A'], ['A', 'LEFT'], ['A', 'RIGHT'],  # Spin jumps
+      ['B'], ['B', 'LEFT'], ['B', 'RIGHT'],  # Normal jumps
+      ['X'], ['X', 'LEFT'], ['X', 'RIGHT'],  # Run
+      ['DOWN'],  # Crouch
+      ['SELECT']  # Drops reserve item
     ]
