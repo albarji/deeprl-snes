@@ -53,7 +53,8 @@ games:
       [],  # No-op
       ['DOWN'], ['LEFT'], ['RIGHT'], ['UP'],  # Basic directions
       ['DOWN', 'RIGHT'], ['RIGHT', 'UP'], ['UP', 'LEFT'], ['LEFT', 'DOWN'],  # Diagonals
-      ['A'], ['B'], ['X'], ['Y'], ['L'], ['R'], ['SELECT'], ['START']  # Buttons  #TODO: remove useless
+      ['A'],  # Use power-up
+      ['B']   # Fire
     ]
   SpaceInvaders-Nes:
     gamepad: "nes"
