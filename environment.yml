@@ -2,10 +2,10 @@ name: gym-retro
 channels:
   - pytorch
 dependencies:
-  - pytorch
-  - torchvision
-  - tensorflow-gpu
-  - cython
+  - pytorch=1.0.0
+  - torchvision=0.2.1
+  - tensorflow-gpu=1.10.0
+  - cython=0.29.2
   - scikit-image=0.14.0
   - opencv=3.4.2
   - cudatoolkit=9.0

@@ -1,6 +1,7 @@
 # Configuration file for constraining each game to specific button actions
 
 gamepads:
+  atari: ['BUTTON', None, 'SELECT', 'RESET', 'UP', 'DOWN', 'LEFT', 'RIGHT']
   genesis: ["B", "A", "MODE", "START", "UP", "DOWN", "LEFT", "RIGHT", "C", "Y", "X", "Z"]
   nes: ["B", "UNK1", "UNK2", "UNK3", "UP", "DOWN", "LEFT", "RIGHT", "A"]
   snes: ["B", "Y", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT", "A", "X", "L", "R"]
@@ -55,6 +56,12 @@ games:
       ['DOWN', 'RIGHT'], ['RIGHT', 'UP'], ['UP', 'LEFT'], ['LEFT', 'DOWN'],  # Diagonals
       ['A'],  # Use power-up
       ['B']   # Fire
+    ]
+  Qbert-Atari2600:
+    gamepad: "atari"
+    actions: [
+      [],  # No-op
+      ['DOWN'], ['LEFT'], ['RIGHT'], ['UP']  # Basic directions
     ]
   SpaceInvaders-Nes:
     gamepad: "nes"
