@@ -167,7 +167,6 @@ def create_config(alg="PPO", workers=4, entropycoeff=None, lstm=None, model=None
 
 def train(config, alg, checkpoint=None):
     """Trains a policy network"""
-    ray.init()
     agent = get_agent_class(alg)(config=config, env="retro-v0")
     if checkpoint is not None:
         try:
@@ -190,7 +189,6 @@ def train(config, alg, checkpoint=None):
 
 def test(config, alg, checkpoint=None, testdelay=0, render=False, envcreator=None, maxepisodelen=10000000):
     """Tests and renders a previously trained model"""
-    ray.init()
     if alg == "random":
         env = envcreator()
     else:
@@ -263,6 +261,8 @@ if __name__ == "__main__":
     config = create_config(args.algorithm, workers=args.workers, entropycoeff=args.entropycoeff, model=args.model,
                            lstm=args.lstm)
     print(f"Config: {json.dumps(config, indent=4, sort_keys=True)}")
+
+    ray.init(num_cpus=args.workers, num_gpus=1)
 
     if args.test:
         test(config, args.algorithm, checkpoint=args.checkpoint, testdelay=args.testdelay,
