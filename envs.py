@@ -36,27 +36,36 @@ class SkipFrames(gym.Wrapper):
     This helps training since frame-precise actions are not really needed.
     In the skipped frames the last performed action is repeated, or if a
     pad_action is provided, such action is used.
+
+    If the maxpool parameter is provided, instead of returning the last frame
+    a max pooling of the last x frames is returned.
     """
-    def __init__(self, env, skip=4, pad_action=None):
+    def __init__(self, env, skip=4, pad_action=None, maxpool=1):
         gym.Wrapper.__init__(self, env)
         self._skip = skip
         self._pad_action = pad_action
+        self._maxpool = maxpool
+        self._maxbuffer = np.zeros((maxpool, ) + env.observation_space.shape, dtype=np.uint8)
 
     def step(self, action):
         """Repeat action, sum reward, and max over last observations."""
         total_reward = 0.0
-        obs = done = info = None
+        done = info = None
         for i in range(self._skip):
             if i == 0 or self._pad_action is None:
                 doact = action
             else:
                 doact = self._pad_action
             obs, reward, done, info = self.env.step(doact)
+            poolindex = i - (self._skip - self._maxpool)
+            if poolindex >= 0:
+                self._maxbuffer[poolindex] = obs
             total_reward += reward
             if done:
-                break
+                break  # At break, maxbuffer might contain incoherent frames, but it doesn't matter at episode end
 
-        return obs, total_reward, done, info
+        max_frame = self._maxbuffer.max(axis=0)
+        return max_frame, total_reward, done, info
 
     def reset(self):
         return self.env.reset()

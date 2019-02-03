@@ -16,7 +16,7 @@ import rnd
 import json
 
 
-def make_env(game, state, rewardscaling=1, skipframes=4, pad_action=None, keepcolor=False,
+def make_env(game, state, rewardscaling=1, skipframes=4, maxpoolframes=1, pad_action=None, keepcolor=False,
              stackframes=4, timepenalty=0, makemovie=None, makeprocessedmovie=None, cliprewards=False):
     """Creates the SNES environment"""
     env = retro.make(game=game, state=state)
@@ -25,7 +25,7 @@ def make_env(game, state, rewardscaling=1, skipframes=4, pad_action=None, keepco
     env = envs.RewardScaler(env, rewardscaling)
     if cliprewards:
         env = envs.RewardClipper(env)
-    env = envs.SkipFrames(env, skip=skipframes, pad_action=pad_action)
+    env = envs.SkipFrames(env, skip=skipframes, pad_action=pad_action, maxpool=maxpoolframes)
     if makemovie is not None:
         env = envs.MovieRecorder(env, fileprefix="raw", mode=makemovie)
     env = envs.WarpFrame(env, togray=not keepcolor)
@@ -227,6 +227,7 @@ if __name__ == "__main__":
     parser.add_argument('--checkpoint', type=str, help='Checkpoint file from which to load learning progress')
     parser.add_argument('--test', action='store_true', help='Run in test mode (no policy updates, render environment)')
     parser.add_argument('--skipframes', type=int, default=4, help='Run the environment skipping N-1 out of N frames')
+    parser.add_argument('--maxpoolframes', type=int, default=1, help='Maxpool the last N frames in the skipped frames')
     parser.add_argument('--padaction', type=int, default=None, help='Index of action used to pad skipped frames')
     parser.add_argument('--keepcolor', action='store_true', help='Keep colors in image processing')
     parser.add_argument('--stackframes', type=int, default=4, help='Give the model a stack of the latest N frames')
@@ -254,7 +255,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    envcreator = register_retro(args.game, args.state, skipframes=args.skipframes,
+    envcreator = register_retro(args.game, args.state, skipframes=args.skipframes, maxpoolframes=args.maxpoolframes,
                                 pad_action=args.padaction, keepcolor=args.keepcolor,
                                 stackframes=args.stackframes,
                                 timepenalty=args.timepenalty, makemovie=args.makemovie,
