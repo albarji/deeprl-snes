@@ -117,13 +117,14 @@ ALGORITHMS = {
             'train_batch_size': 32,
             'num_envs_per_worker': 1,
             'lr_schedule': [
-                [0, 0.0005],
+                [0, 0.0006],
                 [200000000, 0.000000000001],
             ],
             "grad_clip": 40.0,
             "opt_type": "rmsprop",
             "momentum": 0.0,
-            "epsilon": 0.01
+            "epsilon": 0.01,
+            # Ideal use setting should be 1 GPU, 80 workers
         }
     },
     # Random agent for testing purposes
