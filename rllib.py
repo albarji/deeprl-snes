@@ -20,10 +20,11 @@ def make_env(game, state, rewardscaling=1, skipframes=4, pad_action=None, keepco
              stackframes=4, timepenalty=0, makemovie=None, makeprocessedmovie=None, cliprewards=False):
     """Creates the SNES environment"""
     env = retro.make(game=game, state=state)
+    env = envs.ButtonsRemapper(env, game)
+    env = envs.NoopResetEnv(env)
     env = envs.RewardScaler(env, rewardscaling)
     if cliprewards:
         env = envs.RewardClipper(env)
-    env = envs.ButtonsRemapper(env, game)
     env = envs.SkipFrames(env, skip=skipframes, pad_action=pad_action)
     if makemovie is not None:
         env = envs.MovieRecorder(env, fileprefix="raw", mode=makemovie)
@@ -123,7 +124,7 @@ ALGORITHMS = {
             "grad_clip": 40.0,
             "opt_type": "rmsprop",
             "momentum": 0.0,
-            "epsilon": 0.01,
+            "epsilon": 0.01
             # Ideal use setting should be 1 GPU, 80 workers
         }
     },

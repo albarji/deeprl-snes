@@ -194,6 +194,32 @@ class RewardTimeDump(gym.RewardWrapper):
         return reward - self.penalty
 
 
+class NoopResetEnv(gym.Wrapper):
+    """Performs no-action a random number of frames at the beginning of each episode
+
+    Reference: https://github.com/ray-project/ray/blob/master/python/ray/rllib/env/atari_wrappers.py#L79
+    """
+    def __init__(self, env, noop_max=30, noop_action=0):
+        gym.Wrapper.__init__(self, env)
+        self.noop_max = noop_max
+        self.noop_action = noop_action
+
+    def reset(self, **kwargs):
+        """Do no-op action for a number of steps in [1, noop_max]."""
+        self.env.reset(**kwargs)
+        noops = np.random.randint(1, self.noop_max + 1)
+        obs = None
+        for _ in range(noops):
+            obs, _, done, _ = self.env.step(self.noop_action)
+            if done:
+                obs = self.env.reset(**kwargs)
+        return obs
+
+    def step(self, ac):
+        """Normal step"""
+        return self.env.step(ac)
+
+
 class ButtonsRemapper(gym.ActionWrapper):
     """Wrap a gym-retro environment and make it use discrete actions according to a given button remap
 
