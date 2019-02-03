@@ -7,6 +7,8 @@ import yaml
 from skimage import color
 import string
 import random
+import glob
+import re
 
 # Module configuration
 
@@ -285,9 +287,24 @@ class MovieRecorder(gym.ObservationWrapper):
         self.episode_reward += reward
         return self.observation(observation), reward, done, info
 
+    def improves_best(self, reward):
+        """Checks whether a given reward improves over the last so far, in this or other workers
+
+        Other workers are checked by looking at the videos output folder.
+        """
+        # Check against best reward obtained in this worker
+        if reward <= self.best_reward:
+            return False
+        # Check against best reward obtained in other workers (already written videos)
+        videos = glob.glob(f"{self.fileprefix}_reward{self.episode_reward}_*")
+        if len(videos) == 0:
+            return True
+        maxreward = np.max([float(re.search("_reward([0-9.]*)_", v).groups()[0]) for v in videos])
+        return reward > maxreward
+
     def reset(self):
         if len(self.frames) > 0:
-            if self.mode == "all" or (self.mode == "best" and self.episode_reward > self.best_reward):
+            if self.mode == "all" or (self.mode == "best" and self.improves_best(self.episode_reward)):
                 clip = mpy.ImageSequenceClip(self.frames, fps=60)
                 filename = f"{self.fileprefix}_reward{self.episode_reward}_{id_generator()}.mp4"
                 clip.write_videofile(filename)
