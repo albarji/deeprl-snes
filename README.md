@@ -4,13 +4,13 @@ Some tests for algorithms that learn how to play Super Nintendo and other retro 
 
 ## Installation
 
-First create a Conda environment using the provided environment file
+First create a Conda environment using one of the provided environment file, either for CPU or GPU computation. GPU is highly recommended.
 
-    conda env create -f environment.yml
+    conda env create -f environment-gpu.yml
 
-After that, enter the environment
+After that, activate the environment
 
-    source activate gym-retro
+    source activate gym-retro-gpu
 
 Finally you should [install the ROMs](https://github.com/openai/retro/tree/develop#add-new-roms) for the games you want to try.
 

@@ -3,8 +3,7 @@
 import retro
 import argparse
 import ray
-from ray.rllib.agents import ppo, impala, dqn
-from ray.rllib.agents import agent as rllibagent
+from ray.rllib.agents import ppo, impala, dqn, registry
 from ray.tune import register_env
 from ray.tune.logger import pretty_print
 import envs
@@ -142,7 +141,7 @@ def get_agent_class(alg):
         # TODO: testing
         return rnd.PPORNDAgent
     else:
-        return rllibagent.get_agent_class(alg)
+        return registry.get_agent_class(alg)
 
 
 def create_config(alg="PPO", workers=4, entropycoeff=None, lstm=None, model=None):
