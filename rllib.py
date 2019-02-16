@@ -13,6 +13,7 @@ import numpy as np
 from functools import partial
 import rnd
 import json
+import subprocess
 
 
 def make_env(game, state, rewardscaling=1, skipframes=4, maxpoolframes=1, pad_action=None, keepcolor=False,
@@ -251,8 +252,20 @@ if __name__ == "__main__":
     parser.add_argument('--timepenalty', type=float, default=0, help='Reward penalty to apply to each timestep')
     parser.add_argument('--entropycoeff', type=float, default=None, help='Entropy bonus to apply to diverse actions')
     parser.add_argument('--cliprewards', action="store_true", help='Clip rewards to {-1, 0, +1}')
+    parser.add_argument('--waitforinput', action="store_true",
+                        help="Start ray, but don't start training until user input is received. Useful to connect "
+                             "other ray nodes to this manager before training starts.")
+    parser.add_argument('--redisaddress', type=str, default=None, help="Redis address of Ray server to connect to")
+    parser.add_argument('--importroms', type=str, default=None, help='Import roms from given folder before start')
 
     args = parser.parse_args()
+
+    # Shutdown other ray processes to avoid runnig several trainings in parallel
+    ray.shutdown()
+
+    # Import ROMs if requested
+    if args.importroms is not None:
+        subprocess.run(["python", "-m", "retro.import", args.importroms])
 
     envcreator = register_retro(args.game, args.state, skipframes=args.skipframes, maxpoolframes=args.maxpoolframes,
                                 pad_action=args.padaction, keepcolor=args.keepcolor,
@@ -264,7 +277,10 @@ if __name__ == "__main__":
                            lstm=args.lstm)
     print(f"Config: {json.dumps(config, indent=4, sort_keys=True)}")
 
-    ray.init(num_cpus=args.workers, num_gpus=1)
+    ray.init(num_cpus=args.workers, num_gpus=1, redis_address=args.redisaddress)
+
+    if args.waitforinput:
+        input("Press key to start")
 
     if args.test:
         test(config, args.algorithm, checkpoint=args.checkpoint, testdelay=args.testdelay,
