@@ -196,7 +196,10 @@ ALGORITHMS = {
             "grad_clip": 40.0,
             "opt_type": "rmsprop",
             "momentum": 0.0,
-            "epsilon": 0.01
+            "epsilon": 0.01,
+            #"num_data_loader_buffers": 4,
+            #"minibatch_buffer_size": 4,
+            #"num_sgd_iter": 2
             # Ideal use setting should be 1 GPU, 80 workers
         }
     },
@@ -237,6 +240,16 @@ def create_config(alg="PPO", workers=4, entropycoeff=None, lstm=None, model=None
             "lstm_use_prev_action_reward": True
         }
     return config
+
+
+def get_node_ips():
+    """Returns a set with all IP addressess of nodes in the Ray cluster"""
+    @ray.remote
+    def f():
+        time.sleep(0.01)
+        return ray.services.get_node_ip_address()
+
+    return set(ray.get([f.remote() for _ in range(1000)]))
 
 
 def train(config, alg, checkpoint=None):
@@ -324,16 +337,22 @@ if __name__ == "__main__":
     parser.add_argument('--lstm', type=int, default=None,
                         help=f'Length of sequences to feed into the LSTM layer (default: no LSTM layer)')
     parser.add_argument('--workers', type=int, default=4, help='Number of workers to use during training')
+    parser.add_argument('--localworkers', type=int, default=None, help='Number of local workers to use in this machine (default: equal to "workers")')
     parser.add_argument('--timepenalty', type=float, default=0, help='Reward penalty to apply to each timestep')
     parser.add_argument('--entropycoeff', type=float, default=None, help='Entropy bonus to apply to diverse actions')
     parser.add_argument('--cliprewards', action="store_true", help='Clip rewards to {-1, 0, +1}')
     parser.add_argument('--waitforinput', action="store_true",
                         help="Start ray, but don't start training until user input is received. Useful to connect "
                              "other ray nodes to this manager before training starts.")
+    parser.add_argument('--waitfornodes', type=int, default=None,
+                        help="Wait until at least this number of nodes is available in the Ray cluster")
     parser.add_argument('--redisaddress', type=str, default=None, help="Redis address of Ray server to connect to")
     parser.add_argument('--importroms', type=str, default=None, help='Import roms from given folder before start')
 
     args = parser.parse_args()
+
+    if args.localworkers is None:
+        args.localworkers = args.workers
 
     # Shutdown other ray processes to avoid runnig several trainings in parallel
     ray.shutdown()
@@ -358,10 +377,19 @@ if __name__ == "__main__":
                            lstm=args.lstm)
     print(f"Config: {json.dumps(config, indent=4, sort_keys=True)}")
 
-    ray.init(num_cpus=args.workers, num_gpus=1, redis_address=args.redisaddress)
+    ray.init(num_cpus=args.localworkers, num_gpus=1, redis_address=args.redisaddress)
 
     if args.waitforinput:
         input("Press key to start")
+
+    # Get a list of the IP addresses of the nodes that have joined the cluster.
+    nodes = get_node_ips()
+    print(f"Ray nodes in the cluster: {nodes}")
+    if args.waitfornodes:
+        print(f"Available nodes ({len(nodes)}) less than required nodes ({args.waitfornodes}). Waiting...")
+        while len(nodes) < args.waitfornodes:
+            time.sleep(5)
+            nodes = get_node_ips()
 
     if args.test:
         test(config, args.algorithm, checkpoint=args.checkpoint, testdelay=args.testdelay,
