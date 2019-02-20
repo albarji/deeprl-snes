@@ -14,13 +14,26 @@ from functools import partial
 import rnd
 import json
 import subprocess
+import gym
+import copy
 
 
-def make_env(game, state, rewardscaling=1, skipframes=4, maxpoolframes=1, pad_action=None, keepcolor=False,
+def wrap_env(env, rewardscaling=1, skipframes=4, maxpoolframes=1, pad_action=None, keepcolor=False,
              stackframes=4, timepenalty=0, makemovie=None, makeprocessedmovie=None, cliprewards=False):
-    """Creates the SNES environment"""
-    env = retro.make(game=game, state=state)
-    env = envs.ButtonsRemapper(env, game)
+    """Wraps a game environment with many preprocessing options
+
+        base: base environment to wrap
+        skipframes: skip n-1 out of n frames
+        maxpoolframes: compute maxpooling of n consecutive non-skipped frames. Useful to prevent Atari video issues
+        pad_action: action to use for skipped frames. If None, repeat las action
+        keepcolor: keep colored frames. Else, cast all frames to grayscale
+        stackframes: stack n frames before feeding them as inputs for the RL agen
+        timepenalty: penalty to add to every game frame
+        makemovie: save videos of episodes. Valid modes: "all" to record all episodes, "best" to record best episodes
+        makeprocessedmovie: save videos of episodes in the format the RL agent sees them. Similar parameters to
+            makemovie
+        cliprewards: clip rewards to range [-1, 1]
+    """
     env = envs.NoopResetEnv(env)
     env = envs.RewardScaler(env, rewardscaling)
     if cliprewards:
@@ -36,12 +49,71 @@ def make_env(game, state, rewardscaling=1, skipframes=4, maxpoolframes=1, pad_ac
     return env
 
 
+def retro_env_creator(game, state, **kwargs):
+    """Returns a function that creates a new retro environment the given game, state, and wrapper configuration"""
+    base = retro.make(game=game, state=state)
+    base = envs.ButtonsRemapper(base, game)
+    return wrap_env(base, **kwargs)
+
+
+def register_retro(game, state, registername="retro-v0", **kwargs):
+    """Registers a new retro environment with the given game, state, and wrapper configuration
+
+    Returns a creator function that can be used to instantiate the registered environment on demand.
+    """
+    env_creator = lambda env_config: retro_env_creator(game, state, **kwargs)
+    register_env(registername, env_creator)
+    return partial(env_creator, {})
+
+
+def gym_atari_env_creator(game, **kwargs):
+    """Returns a function that creates a new gym atari environment with given game, state, and wrapper configuration"""
+    base = gym.make(game)
+    return wrap_env(base, **kwargs)
+
+
+def register_gym_atari(game, registername="retro-v0", **kwargs):
+    """Registers a new gym atari environment the given game, state, and wrapper configuration
+
+    Returns a creator function that can be used to instantiate the registered environment on demand.
+    """
+    wrapconf = copy.copy(kwargs)
+    if "state" in wrapconf:
+        del wrapconf["state"]
+    env_creator = lambda env_config: gym_atari_env_creator(game, **wrapconf)
+    register_env(registername, env_creator)
+    return partial(env_creator, {})
+
+
+BACKENDS = {
+    "retro": {
+        "register_func": register_retro
+    },
+    "gym-atari": {
+        "register_func": register_gym_atari
+    }
+}
+
+
 def register_retro(game, state, **kwargs):
     """Registers a given retro game as a ray environment
 
     The environment is registered with name 'retro-v0'
     """
-    env_creator = lambda env_config: make_env(game=game, state=state, **kwargs)
+    base = retro.make(game=game, state=state)
+    base = envs.ButtonsRemapper(base, game)
+    env_creator = lambda env_config: make_env(base=base, **kwargs)
+    register_env("retro-v0", env_creator)
+    return partial(env_creator, {})
+
+
+def register_atari(game, **kwargs):
+    """Registers a given gym Atari game as a ray environment
+
+    The environment is registered with name 'retro-v0'
+    """
+    base = gym.make(game)
+    env_creator = lambda env_config: make_env(base=base, **kwargs)
     register_env("retro-v0", env_creator)
     return partial(env_creator, {})
 
@@ -223,7 +295,10 @@ def test(config, alg, checkpoint=None, testdelay=0, render=False, envcreator=Non
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Agent that learns how to play a retro game by using RLLib.')
     parser.add_argument('game', type=str, help='Game to play. Must be a valid Gym Retro game')
-    parser.add_argument('state', type=str, help='State (level) of the game to play')
+    parser.add_argument('--state', type=str, default=None,
+                        help='State (level) of the game to play. Only used for retro backend')
+    parser.add_argument('--backend', type=str, default="retro",
+                        help=f'Emulator backend to use, from {list(BACKENDS.keys())}. Default: "retro"')
     parser.add_argument('--checkpoint', type=str, help='Checkpoint file from which to load learning progress')
     parser.add_argument('--test', action='store_true', help='Run in test mode (no policy updates, render environment)')
     parser.add_argument('--skipframes', type=int, default=4, help='Run the environment skipping N-1 out of N frames')
@@ -267,11 +342,17 @@ if __name__ == "__main__":
     if args.importroms is not None:
         subprocess.run(["python", "-m", "retro.import", args.importroms])
 
-    envcreator = register_retro(args.game, args.state, skipframes=args.skipframes, maxpoolframes=args.maxpoolframes,
-                                pad_action=args.padaction, keepcolor=args.keepcolor,
-                                stackframes=args.stackframes,
-                                timepenalty=args.timepenalty, makemovie=args.makemovie,
-                                makeprocessedmovie=args.makeprocessedmovie, cliprewards=args.cliprewards)
+    # Check backend
+    if args.backend not in BACKENDS:
+        raise ValueError(f"Unknown backend {args.backend}, must be one of {list(BACKENDS.keys())}")
+    backend = BACKENDS[args.backend]
+
+    # Register environment
+    envcreator = backend["register_func"](game=args.game, state=args.state, skipframes=args.skipframes,
+                                          maxpoolframes=args.maxpoolframes, pad_action=args.padaction,
+                                          keepcolor=args.keepcolor, stackframes=args.stackframes,
+                                          timepenalty=args.timepenalty, makemovie=args.makemovie,
+                                          makeprocessedmovie=args.makeprocessedmovie, cliprewards=args.cliprewards)
 
     config = create_config(args.algorithm, workers=args.workers, entropycoeff=args.entropycoeff, model=args.model,
                            lstm=args.lstm)
