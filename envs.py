@@ -2,7 +2,6 @@ import numpy as np
 import cv2
 from collections import deque
 import gym
-import moviepy.editor as mpy
 import yaml
 from skimage import color
 import string
@@ -270,6 +269,7 @@ class MovieRecorder(gym.ObservationWrapper):
             mode: "all" to save a movie for every episode
                   "best" to save only when a better result is obtained
         """
+        import moviepy.editor as mpy
         gym.Wrapper.__init__(self, env)
         assert mode in self.MODES
         self.mode = mode
