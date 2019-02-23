@@ -269,7 +269,6 @@ class MovieRecorder(gym.ObservationWrapper):
             mode: "all" to save a movie for every episode
                   "best" to save only when a better result is obtained
         """
-        import moviepy.editor as mpy
         gym.Wrapper.__init__(self, env)
         assert mode in self.MODES
         self.mode = mode
@@ -303,6 +302,7 @@ class MovieRecorder(gym.ObservationWrapper):
         return reward > maxreward
 
     def reset(self):
+        import moviepy.editor as mpy
         if len(self.frames) > 0:
             if self.mode == "all" or (self.mode == "best" and self.improves_best(self.episode_reward)):
                 clip = mpy.ImageSequenceClip(self.frames, fps=60)
@@ -336,5 +336,6 @@ def saveanimation(rawframes, filename):
 
     The filename must include an appropriate video extension
     """
+    import moviepy.editor as mpy
     clip = mpy.ImageSequenceClip(rawframes, fps=60)
     clip.write_videofile(filename)
