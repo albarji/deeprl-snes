@@ -70,6 +70,15 @@ games:
       ['A'],  # Fire
       ['LEFT'], ['RIGHT']  # Move around
     ]
+  StreetFighterIISpecialChampionEdition-Genesis:
+    gamepad: "genesis"
+    actions: [
+      [],  # No-op
+      ['LEFT'], ['RIGHT'], ['UP'], ['DOWN'],  # Move around
+      ['UP', 'LEFT'], ['UP', 'RIGHT'], ['DOWN', 'LEFT'], ['DOWN', 'RIGHT'],  # Diagonals
+      ['X'], ['Y'], ['Z'],  # Punches
+      ['A'], ['B'], ['C']  # Kicks
+    ]
   SuperMarioWorld-Snes:
     gamepad: "snes"
     actions: [
