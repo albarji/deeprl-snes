@@ -295,10 +295,10 @@ class MovieRecorder(gym.ObservationWrapper):
         if reward <= self.best_reward:
             return False
         # Check against best reward obtained in other workers (already written videos)
-        videos = glob.glob(f"{self.fileprefix}_reward{self.episode_reward}_*")
+        videos = glob.glob(f"{self.fileprefix}_reward*")
         if len(videos) == 0:
             return True
-        maxreward = np.max([float(re.search("_reward([0-9.]*)_", v).groups()[0]) for v in videos])
+        maxreward = np.max([float(re.search("_reward(-*[0-9.]*)_", v).groups()[0]) for v in videos])
         return reward > maxreward
 
     def reset(self):

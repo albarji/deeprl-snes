@@ -57,6 +57,15 @@ games:
       ['A'],  # Use power-up
       ['B']   # Fire
     ]
+  GradiusIII-shaped-Snes:
+    gamepad: "snes"
+    actions: [
+      [],  # No-op
+      ['DOWN'], ['LEFT'], ['RIGHT'], ['UP'],  # Basic directions
+      ['DOWN', 'RIGHT'], ['RIGHT', 'UP'], ['UP', 'LEFT'], ['LEFT', 'DOWN'],  # Diagonals
+      ['A'],  # Use power-up
+      ['B']   # Fire
+    ]
   Qbert-Atari2600:
     gamepad: "atari"
     actions: [
